@@ -55,8 +55,8 @@ flowchart LR
 
     FiberApp <--> Keycloak
     Kong <--> Keycloak
-    FiberApp <--> MongoDB
-    Kong <--> HTTPClient
+    FiberApp --> MongoDB
+    Kong --> HTTPClient
 ````
 
 ---
