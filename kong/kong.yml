@@ -1,0 +1,35 @@
+_format_version: "2.1"
+_transform: true
+
+services:
+  - name: fiber-service
+    url: http://app:3000
+    routes:
+      - name: fiber-route
+        paths:
+          - /
+        strip_path: false
+        preserve_host: false
+        protocols:
+          - http
+    # Enable the jwt plugin on this service
+    plugins:
+      - name: jwt
+        config:
+          claims_to_verify:
+            - exp
+          key_claim_name: "preferred_username"
+
+consumers:
+  # We’ll create two consumers to represent Keycloak roles
+  - username: kong-user
+    custom_id: "realm-user"
+  - username: kong-admin
+    custom_id: "realm-admin"
+
+  # (Optional) If you want to map actual JWTs to Kong Consumers,
+  # you can create JWT credentials for each consumer. However, since
+  # we rely on Keycloak, we’ll trust tokens are valid if signed by Keycloak.
+
+# Note: In enterprise Kong, you could also enable the RBAC plugin here.
+# For this example, we rely on the Fiber app for role checks.
