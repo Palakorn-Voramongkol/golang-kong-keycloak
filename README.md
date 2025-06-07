@@ -2,7 +2,7 @@
 
 This repository demonstrates a simple setup where:
 
-- **API-Backend** (Go) serves as a backend REST API  
+- **Fiber (API-Backend using Fiber)** (Go) serves as a backend REST API  
 - **MongoDB** stores application data  
 - **Keycloak** (Quarkus) provides OpenID Connect / JWT-based authentication & authorization  
 - **Kong** (DB-less mode) acts as an API gateway (optional)  
