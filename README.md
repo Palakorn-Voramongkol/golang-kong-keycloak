@@ -1,284 +1,122 @@
-# Fiber + Keycloak + MongoDB Demo
+# Secure Go API with Kong (DB-Backed) and Keycloak
 
-A simple demo showing how to secure a Go Fiber API with Keycloak-issued JWTs, enforce realm-role-based access, and connect to MongoDB — **all traffic flows through Kong** as the API gateway.
+This project demonstrates a complete, production-ready setup for securing a Go backend API using **Kong** as an API Gateway in **DB-Backed Mode** and Keycloak for identity and access management.
 
----
+Running Kong with a database is the standard approach for production environments that require dynamic configuration, high availability, and the ability to manage the gateway via its Admin API. This setup uses Kong's built-in `jwt` plugin for maximum stability and performance.
 
-## Table of Contents
+## Architecture & Flow
 
-- [Fiber + Keycloak + MongoDB Demo](#fiber--keycloak--mongodb-demo)
-  - [Table of Contents](#table-of-contents)
-  - [Overview](#overview)
-  - [Architecture](#architecture)
-  - [Prerequisites](#prerequisites)
-  - [Project Structure](#project-structure)
-  - [Configuration](#configuration)
-    - [Environment Variables](#environment-variables)
-  - [Getting Started](#getting-started)
-    - [Clone \& Build](#clone--build)
-    - [Install Go Dependencies](#install-go-dependencies)
-    - [Run with Docker Compose](#run-with-docker-compose)
-  - [API Endpoints (via Kong)](#api-endpoints-via-kong)
-  - [Testing (through Kong)](#testing-through-kong)
-    - [1. Obtain a JWT via Kong](#1-obtain-a-jwt-via-kong)
-      - [Linux/macOS (bash)](#linuxmacos-bash)
-      - [Windows (PowerShell)](#windows-powershell)
-    - [2. Test Endpoints via Kong](#2-test-endpoints-via-kong)
-      - [Linux/macOS (bash)](#linuxmacos-bash-1)
-      - [Windows (PowerShell)](#windows-powershell-1)
-  - [Contributing](#contributing)
-  - [License](#license)
-
----
-
-## Overview
-
-This demo shows:
-
-- A Go Fiber application exposing 4 endpoints  
-- JWT validation via Keycloak’s JWKS endpoint  
-- Role-based guards (`user` vs `admin`)  
-- MongoDB integration to demonstrate a protected DB call  
-- **All API traffic is proxied through Kong** on port **8000** (HTTP) or **8443** (HTTPS)
-
----
-
-## Architecture
+The runtime architecture uses Kong to protect the backend service. All configuration is applied dynamically to Kong's database via its Admin API after startup.
 
 ```mermaid
 sequenceDiagram
-    participant Client as HTTP Client
-    participant Kong
-    participant Keycloak
-    participant FiberApp as Fiber App
-    participant MongoDB
+    participant Client
+    participant Kong Gateway (:8081)
+    participant Keycloak (:8080)
+    participant Go App (:3000)
+    participant Kong Admin API (:8001)
+    participant Kong DB
 
-    %% Token acquisition
-    Client->>Kong: POST /realms/demo-realm/protocol/openid-connect/token  
-    activate Kong
-    Kong->>Keycloak: POST /realms/demo-realm/protocol/openid-connect/token  
-    activate Keycloak
-    Keycloak-->>Kong: { access_token }  
-    deactivate Keycloak
-    Kong-->>Client: { access_token }  
-    deactivate Kong
+    Note over Client, Go App: Initial Setup
+    activate Kong Admin API
+    Admin Script->>Kong Admin API: POST /services (Create go-app-service)
+    Kong Admin API->>Kong DB: Store service
+    Admin Script->>Kong Admin API: POST /routes (Create /profile)
+    Kong Admin API->>Kong DB: Store route
+    Admin Script->>Kong Admin API: POST /plugins (Enable JWT)
+    Kong Admin API->>Kong DB: Store plugin config
+    Admin Script->>Kong Admin API: POST /consumers (Create keycloak-users)
+    Kong Admin API->>Kong DB: Store consumer
+    Admin Script->>Keycloak: GET /certs (Fetch public key)
+    Keycloak-->>Admin Script: JWKS Data
+    Admin Script->>Kong Admin API: POST /consumers/keycloak-users/jwt (Add public key)
+    Kong Admin API->>Kong DB: Store JWT secret
+    deactivate Kong Admin API
+    
+    Note over Client, Go App: Runtime Request
+    Client->>+Keycloak: Request token (user: alice, pass: ...)
+    Keycloak-->>-Client: JWT
 
-    %% Protected request
-    Client->>Kong: GET /admin (Bearer token)  
-    activate Kong
-    Kong->>Keycloak: GET /realms/demo-realm/protocol/openid-connect/certs  
-    activate Keycloak
-    Keycloak-->>Kong: JWKS keys  
-    deactivate Keycloak
-    Kong-->>Kong: Validate JWT  
+    Client->>+Kong Gateway: GET /profile (Authorization: Bearer JWT)
+    
+    Note over Kong Gateway: Validate JWT using stored public key
+    Note over Kong Gateway: JWT is valid!
 
-    Kong->>FiberApp: GET /admin  
-    activate FiberApp
-    FiberApp->>MongoDB: CountDocuments("items")  
-    activate MongoDB
-    MongoDB-->>FiberApp: count  
-    deactivate MongoDB
-    FiberApp-->>Kong: { message, itemCountDB }  
-    deactivate FiberApp
-
-    Kong-->>Client: { message, itemCountDB }  
-    deactivate Kong
-
-````
-
----
-
-## Prerequisites
-
-* Docker & Docker Compose v2+
-* Go toolchain (optional, only if you modify `main.go`)
-* `curl`, `jq`, or any HTTP client for testing
-* PowerShell (on Windows) for the PS examples
-
----
-
-## Project Structure
-
-```
-.
-├── Dockerfile              # Builds the Fiber app
-├── docker-compose.yml      # Orchestrates mongo, keycloak, kong, app
-├── keycloak/
-│   └── import-realm.json   # Demo realm + users + roles + client
-├── kong/
-│   └── kong.yml            # Kong declarative config (JWT plugin, consumers)
-└── main.go                 # Fiber application entrypoint
+    Kong Gateway->>+Go App: GET /profile (Forward request)
+    Go App-->>-Kong Gateway: 200 OK ({"message":"Hello, alice", ...})
+    Kong Gateway-->>-Client: 200 OK ({"message":"Hello, alice", ...})
 ```
 
----
+## How to Run
 
-## Configuration
+1.  **Clean up previous volumes (Important for a fresh start):**
+    ```powershell
+    docker-compose down -v
+    ```
 
-### Environment Variables
+2.  **Build and start all services:**
+    The `--build` flag is only needed if you change your Go application's `Dockerfile`.
+    ```powershell
+    docker-compose up --build -d
+    ```
+    This command will start all services. The containers will start up in the correct order based on the `depends_on` configuration.
 
-| Name              | Default                                   | Purpose                                    |
-| ----------------- | ----------------------------------------- | ------------------------------------------ |
-| `MONGO_URI`       | `mongodb://localhost:27017`               | MongoDB connection URI                     |
-| `MONGO_DB`        | `demo_db`                                 | MongoDB database name                      |
-| `KEYCLOAK_ISSUER` | `http://localhost:8080/realms/demo-realm` | Base URL for Keycloak realm (for JWKS URL) |
-| `KONG_URL`        | `http://localhost:8000`                   | Kong gateway base URL for testing          |
+3.  **Wait for all services to initialize.**
+    This is a critical step. Wait about **60-90 seconds** after the command finishes to ensure Keycloak and Kong are fully ready. You can monitor the status with `docker-compose ps`.
 
----
+4.  **Configure Kong automatically:**
+    In your PowerShell terminal, run the provided configuration script. This script will wait for the Admin API to be ready and then apply all necessary settings.
+    ```powershell
+    .\configure-kong.ps1
+    ```
+    You should see output confirming that the service, routes, and credentials were created successfully.
 
-## Getting Started
+## Testing the Endpoints
 
-### Clone & Build
+After the configuration script has run, your gateway is ready to test.
 
-```bash
-git clone https://github.com/your-org/fiber-keycloak-mongo-demo.git
-cd fiber-keycloak-mongo-demo
-```
+1.  **Get a Token for `alice`:**
+    ```powershell
+    $resp = Invoke-RestMethod -Method Post `
+      -Uri http://localhost:8080/realms/demo-realm/protocol/openid-connect/token `
+      -ContentType "application/x-www-form-urlencoded" `
+      -Body @{
+        grant_type = 'password'
+        client_id  = 'fiber-app'
+        username   = 'alice'
+        password   = 'password123'
+      }
+    $token = $resp.access_token
+    ```
 
-*No need to build Go code locally unless you change `main.go`. Docker Compose will handle it.*
+2.  **Test the Public Endpoint (succeeds):**
+    ```powershell
+    curl http://localhost:8081/public
+    ```
 
-### Install Go Dependencies
+3.  **Test the Profile Endpoint (succeeds):**
+    ```powershell
+    curl -H "Authorization: Bearer $token" http://localhost:8081/profile
+    ```
 
-```bash
+4.  **Test without a Token (fails):**
+    ```powershell
+    curl -v http://localhost:8081/profile
+    # Expected Output: HTTP/1.1 401 Unauthorized
+    ```
 
-go mod tidy
+## Deep Dive: Kong Configuration with the `jwt` Plugin
 
-```
+This project uses Kong's stable, **built-in `jwt` plugin**. This avoids the fragility of community plugins. The configuration is applied via API calls:
 
-### Run with Docker Compose
+1.  **Service and Routes:** We first define the `go-app-service` and its associated URL paths (`/public`, `/profile`).
 
-```bash
-docker-compose up --build
-```
+2.  **Enable the `jwt` Plugin:** We apply the `jwt` plugin to the entire `go-app-service`. This means, by default, all routes on that service will require a valid JWT.
 
-This starts MongoDB, Keycloak, Kong, and the Fiber app (behind Kong).
+3.  **Create a `Consumer`:** A Kong `Consumer` is an identity that we can associate credentials with. We create a generic `keycloak-users` consumer to represent all users coming from our Keycloak realm.
 
----
+4.  **Register the Public Key:** This is the most important step. We make an API call to `/consumers/keycloak-users/jwt` and provide Keycloak's public key.
+    *   The `key` field is set to the Keycloak token's `kid` (Key ID). When Kong sees an incoming JWT, it looks at the `kid` in the token's header and finds the matching credential we registered.
+    *   The `rsa_public_key` is the actual public key used to verify the token's signature.
 
-## API Endpoints (via Kong)
-
-*All requests go through Kong at **`http://localhost:8000`** (or HTTPS on 8443).*
-
-| Method | Path       | Auth                               | Description                    |
-| ------ | ---------- | ---------------------------------- | ------------------------------ |
-| GET    | `/public`  | None                               | Public endpoint                |
-| GET    | `/profile` | Bearer JWT                         | Any authenticated user         |
-| GET    | `/user`    | Bearer JWT with realm-role `user`  | User-level protected endpoint  |
-| GET    | `/admin`   | Bearer JWT with realm-role `admin` | Admin-level protected endpoint |
-
----
-
-## Testing (through Kong)
-
-### 1. Obtain a JWT via Kong
-
-#### Linux/macOS (bash)
-
-```bash
-# Alice (role "user")
-export TOKEN=$(
-  curl -s -X POST http://localhost:8000/realms/demo-realm/protocol/openid-connect/token \
-    -H "Content-Type: application/x-www-form-urlencoded" \
-    -d "grant_type=password&client_id=fiber-app&username=alice&password=password123" \
-    | jq -r .access_token
-)
-
-# Bob (role "admin")
-export ADMIN_TOKEN=$(
-  curl -s -X POST http://localhost:8000/realms/demo-realm/protocol/openid-connect/token \
-    -H "Content-Type: application/x-www-form-urlencoded" \
-    -d "grant_type=password&client_id=fiber-app&username=bob&password=password123" \
-    | jq -r .access_token
-)
-```
-
-#### Windows (PowerShell)
-
-```powershell
-# Alice (role "user")
-$TOKEN = (Invoke-RestMethod -Method Post `
-  -Uri http://localhost:8000/realms/demo-realm/protocol/openid-connect/token `
-  -ContentType "application/x-www-form-urlencoded" `
-  -Body @{
-    grant_type  = 'password'
-    client_id   = 'fiber-app'
-    username    = 'alice'
-    password    = 'password123'
-  }).access_token
-
-# Bob (role "admin")
-$ADMIN_TOKEN = (Invoke-RestMethod -Method Post `
-  -Uri http://localhost:8000/realms/demo-realm/protocol/openid-connect/token `
-  -ContentType "application/x-www-form-urlencoded" `
-  -Body @{
-    grant_type  = 'password'
-    client_id   = 'fiber-app'
-    username    = 'bob'
-    password    = 'password123'
-  }).access_token
-```
-
-### 2. Test Endpoints via Kong
-
-#### Linux/macOS (bash)
-
-```bash
-# Public
-curl http://localhost:8000/public
-
-# Profile
-curl http://localhost:8000/profile \
-  -H "Authorization: Bearer $TOKEN"
-
-# User endpoint
-curl http://localhost:8000/user \
-  -H "Authorization: Bearer $TOKEN"
-
-# Admin endpoint
-curl http://localhost:8000/admin \
-  -H "Authorization: Bearer $ADMIN_TOKEN"
-```
-
-#### Windows (PowerShell)
-
-```powershell
-# Public
-Invoke-RestMethod -Uri http://localhost:8000/public
-
-# Profile
-Invoke-RestMethod -Uri http://localhost:8000/profile `
-  -Headers @{ Authorization = "Bearer $TOKEN" }
-
-# User endpoint
-Invoke-RestMethod -Uri http://localhost:8000/user `
-  -Headers @{ Authorization = "Bearer $TOKEN" }
-
-# Admin endpoint
-Invoke-RestMethod -Uri http://localhost:8000/admin `
-  -Headers @{ Authorization = "Bearer $ADMIN_TOKEN" }
-```
-
-**Expected status codes:**
-
-* `/public`: **200 OK**
-* `/profile`: **200 OK**
-* `/user`: **200 OK** for Alice, **403 Forbidden** otherwise
-* `/admin`: **200 OK** for Bob, **403 Forbidden** otherwise
-
----
-
-## Contributing
-
-1. Fork the repo
-2. Create a feature branch
-3. Commit & push your changes
-4. Open a pull request
-
-*Please format Go code with `go fmt` and add tests for new behavior.*
-
----
-
-## License
-
-MIT © Palakorn Voramongkol
-
-
+This setup securely configures Kong to trust JWTs issued by your Keycloak instance without needing any custom code in the gateway itself.
