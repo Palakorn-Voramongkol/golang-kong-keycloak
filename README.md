@@ -53,10 +53,10 @@ flowchart LR
     MongoDB["MongoDB<br>(27017)"]
     HTTPClient["HTTP Client<br>(curl, etc)"]
 
-    FiberApp <--> Kong
+    FiberApp <--> Keycloak
     Kong <--> Keycloak
-    FiberApp --> MongoDB
-    Keycloak --> HTTPClient
+    FiberApp <--> MongoDB
+    Kong <--> HTTPClient
 ````
 
 ---
