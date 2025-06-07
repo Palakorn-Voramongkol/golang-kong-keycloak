@@ -2,15 +2,15 @@
 
 This repository demonstrates a simple setup where:
 
-* **Fiber** (Go) serves as a backend REST API
-* **MongoDB** stores application data
-* **Keycloak** (Quarkus) provides OpenID Connect / JWT-based authentication & authorization
-* **Kong** (DB-less mode) acts as an API gateway (optional)
+* **Fiber** (Go) serves as a backend REST API  
+* **MongoDB** stores application data  
+* **Keycloak** (Quarkus) provides OpenID Connect / JWT-based authentication & authorization  
+* **Kong** (Postgres-backed) acts as an API gateway (optional)  
 
 Users are preconfigured via an import-realm file. Two test users exist:
 
-* **alice** (password: `password123`) with the `user` role
-* **bob** (password: `password123`) with the `admin` role
+* **alice** (password: `password123`) with the `user` role  
+* **bob** (password: `password123`) with the `admin` role  
 
 A public endpoint is exposed at `/public`, and protected endpoints are `/profile`, `/user` (role “user” only) and `/admin` (role “admin” only). The `/admin` route also demonstrates a MongoDB query.
 
@@ -34,7 +34,7 @@ A public endpoint is exposed at `/public`, and protected endpoints are `/profile
       - [Keycloak](#keycloak)
       - [Kong](#kong)
       - [API-backend](#api-backend)
-      - [4. Enable Direct Access Grants on the `fiber-app` Client](#4-enable-direct-access-grants-on-the-fiber-app-client)
+    - [4. Enable Direct Access Grants on the `fiber-app` Client](#4-enable-direct-access-grants-on-the-fiber-app-client)
   - [Sequence Diagram](#sequence-diagram)
   - [Getting a Keycloak Access Token](#getting-a-keycloak-access-token)
       - [Token Endpoint](#token-endpoint)
@@ -82,12 +82,11 @@ A public endpoint is exposed at `/public`, and protected endpoints are `/profile
 
 ## Prerequisites
 
-* **Docker 20.10+** and **Docker Compose 1.29+** installed locally
-* Ports **27017**, **8080**, **8000**, **8001**, and **3000** free on your host
-* A terminal on your platform:
-
-  * **Linux/macOS**: bash or zsh
-  * **Windows**: PowerShell (or WSL)
+* **Docker 20.10+** and **Docker Compose 1.29+** installed locally  
+* Ports **27017**, **8080**, **8000**, **8001**, and **3000** free on your host  
+* A terminal on your platform:  
+  * **Linux/macOS**: bash or zsh  
+  * **Windows**: PowerShell (or WSL)  
 
 All services run in Docker containers—no additional installs are required on the host.
 
@@ -96,6 +95,7 @@ All services run in Docker containers—no additional installs are required on t
 ## Project Structure
 
 ```
+
 .
 ├─ Dockerfile                   # Builds the Fiber Go app
 ├─ main.go                      # Fiber application code (handlers + JWT middleware)
@@ -106,38 +106,33 @@ All services run in Docker containers—no additional installs are required on t
 │   └─ kong.yml                 # Kong declarative config (routes to Fiber app)
 ├─ API-backend                  # container built from `Dockerfile`
 └─ README.md                    # ← (this file)
-```
 
-* **main.go**
+````
 
-  * Connects to MongoDB
-  * Exposes:
+* **main.go**  
+  * Connects to MongoDB  
+  * Exposes:  
+    * `GET /public` (no auth)  
+    * `GET /profile` (any valid JWT)  
+    * `GET /user` (requires realm role `user`)  
+    * `GET /admin` (requires realm role `admin`; counts documents in `items` collection)  
 
-    * `GET /public` (no auth)
-    * `GET /profile` (any valid JWT)
-    * `GET /user` (requires realm role `user`)
-    * `GET /admin` (requires realm role `admin`; counts documents in `items` collection)
+* **docker-compose.yml**  
+  * **mongo** container (MongoDB 6.0)  
+  * **keycloak** container (Keycloak 21.1.1 in `start-dev` mode)  
+  * **kong-database** (PostgreSQL for Kong, though Kong runs DB-less)  
+  * **kong** (Kong 3.5, declarative mode via `kong.yml`)  
+  * **app** (container built from `Dockerfile`)  
 
-* **docker-compose.yml**
+* **keycloak/import-realm.json**  
+  * Defines a realm `demo-realm`  
+  * Two users:  
+    * `alice` / `password123` (realm role `user`)  
+    * `bob` / `password123` (realm role `admin`)  
+  * One public-client `fiber-app` (no secret, redirect URIs = `*`)  
 
-  * **mongo** container (MongoDB 6.0)
-  * **keycloak** container (Keycloak 21.1.1 in `start-dev` mode)
-  * **kong-database** (PostgreSQL for Kong, though Kong runs DB-less)
-  * **kong** (Kong 3.5, declarative mode via `kong.yml`)
-  * **app** (container built from `Dockerfile`)
-
-* **keycloak/import-realm.json**
-
-  * Defines a realm `demo-realm`
-  * Two users:
-
-    * `alice` / `password123` (realm role `user`)
-    * `bob` / `password123` (realm role `admin`)
-  * One public-client `fiber-app` (no secret, redirect URIs = `*`)
-
-* **kong/kong.yml**
-
-  * Declarative config that proxies requests to the Fiber app at `http://app:3000`
+* **kong/kong.yml**  
+  * Declarative config that proxies requests to the Fiber app at `http://app:3000`  
 
 ---
 
@@ -150,7 +145,7 @@ All services run in Docker containers—no additional installs are required on t
 ```bash
 git clone https://github.com/your-username/fiber-mongo-keycloak-kong-demo.git
 cd fiber-mongo-keycloak-kong-demo
-```
+````
 
 #### Windows (PowerShell)
 
@@ -281,15 +276,11 @@ Fiber v2.xx.x              http://127.0.0.1:3000
 
 ---
 
-#### 4. Enable Direct Access Grants on the `fiber-app` Client
+### 4. Enable Direct Access Grants on the `fiber-app` Client
 
 Before fetching tokens via the password grant, you need to log in and enable Direct Access Grants:
 
-1. Open your browser to
-
-   ```
-   http://localhost:8080/auth/admin/
-   ```
+1. Open your browser to [http://localhost:8080/auth/admin/](http://localhost:8080/auth/admin/)
 2. Sign in with the Keycloak admin credentials:
 
    * **Username**: `admin`
