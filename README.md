@@ -298,12 +298,13 @@ Before fetching tokens via the password grant, you need to log in and enable Dir
 ---
 ## Sequence Diagram
 
+
 ```mermaid
 sequenceDiagram
     participant Client
     participant KC as Keycloak
     participant Kong
-    participant App as FiberApp
+    participant App as API-backend
     participant MongoDB
 
     Client->>KC: POST /realms/demo-realm/protocol/openid-connect/token  
