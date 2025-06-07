@@ -2,17 +2,57 @@ _format_version: "2.1"
 _transform: true
 
 services:
-  - name: fiber-service
-    url: http://app:3000
+  # 1) Proxy Keycloak’s OIDC endpoints through Kong
+  - name: keycloak-oidc
+    url: http://keycloak:8080
     routes:
-      - name: fiber-route
+      - name: kc-token
         paths:
-          - /
+          - /realms/demo-realm/protocol/openid-connect/token
         strip_path: false
         preserve_host: false
         protocols:
           - http
-    # Enable the jwt plugin on this service
+      - name: kc-certs
+        paths:
+          - /realms/demo-realm/protocol/openid-connect/certs
+        strip_path: false
+        preserve_host: false
+        protocols:
+          - http
+
+  # 2) Your Fiber app’s endpoints, explicitly listed
+  - name: fiber-service
+    url: http://app:3000
+    routes:
+      - name: public-route
+        paths:
+          - /public
+        strip_path: false
+        preserve_host: false
+        protocols:
+          - http
+      - name: profile-route
+        paths:
+          - /profile
+        strip_path: false
+        preserve_host: false
+        protocols:
+          - http
+      - name: user-route
+        paths:
+          - /user
+        strip_path: false
+        preserve_host: false
+        protocols:
+          - http
+      - name: admin-route
+        paths:
+          - /admin
+        strip_path: false
+        preserve_host: false
+        protocols:
+          - http
     plugins:
       - name: jwt
         config:
@@ -21,15 +61,7 @@ services:
           key_claim_name: "preferred_username"
 
 consumers:
-  # We’ll create two consumers to represent Keycloak roles
   - username: kong-user
     custom_id: "realm-user"
   - username: kong-admin
     custom_id: "realm-admin"
-
-  # (Optional) If you want to map actual JWTs to Kong Consumers,
-  # you can create JWT credentials for each consumer. However, since
-  # we rely on Keycloak, we’ll trust tokens are valid if signed by Keycloak.
-
-# Note: In enterprise Kong, you could also enable the RBAC plugin here.
-# For this example, we rely on the Fiber app for role checks.
