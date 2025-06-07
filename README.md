@@ -46,17 +46,44 @@ This demo shows:
 ## Architecture
 
 ```mermaid
-flowchart LR
-    FiberApp["Fiber App<br>(port 3000)"]
-    Kong["Kong<br>(8000/8443)"]
-    Keycloak["Keycloak Auth<br>(8080)"]
-    MongoDB["MongoDB<br>(27017)"]
-    HTTPClient["HTTP Client<br>(curl, etc)"]
+sequenceDiagram
+    participant Client as HTTP Client
+    participant Kong
+    participant Keycloak
+    participant FiberApp as Fiber App
+    participant MongoDB
 
-    FiberApp <--> Keycloak
-    Kong <--> Keycloak
-    FiberApp --> MongoDB
-    Kong --> HTTPClient
+    %% Token acquisition
+    Client->>Kong: POST /realms/demo-realm/protocol/openid-connect/token  
+    activate Kong
+    Kong->>Keycloak: POST /realms/demo-realm/protocol/openid-connect/token  
+    activate Keycloak
+    Keycloak-->>Kong: { access_token }  
+    deactivate Keycloak
+    Kong-->>Client: { access_token }  
+    deactivate Kong
+
+    %% Protected request
+    Client->>Kong: GET /admin (Bearer token)  
+    activate Kong
+    Kong->>Keycloak: GET /realms/demo-realm/protocol/openid-connect/certs  
+    activate Keycloak
+    Keycloak-->>Kong: JWKS keys  
+    deactivate Keycloak
+    Kong-->>Kong: Validate JWT  
+
+    Kong->>FiberApp: GET /admin  
+    activate FiberApp
+    FiberApp->>MongoDB: CountDocuments("items")  
+    activate MongoDB
+    MongoDB-->>FiberApp: count  
+    deactivate MongoDB
+    FiberApp-->>Kong: { message, itemCountDB }  
+    deactivate FiberApp
+
+    Kong-->>Client: { message, itemCountDB }  
+    deactivate Kong
+
 ````
 
 ---
