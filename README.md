@@ -35,6 +35,7 @@ A public endpoint is exposed at `/public`, and protected endpoints are `/profile
       - [Kong](#kong)
       - [Fiber App](#fiber-app)
       - [4. Enable Direct Access Grants on the `fiber-app` Client](#4-enable-direct-access-grants-on-the-fiber-app-client)
+  - [Sequence Diagram](#sequence-diagram)
   - [Getting a Keycloak Access Token](#getting-a-keycloak-access-token)
       - [Token Endpoint](#token-endpoint)
       - [Linux / macOS (bash or zsh)](#linux--macos-bash-or-zsh-2)
@@ -295,7 +296,39 @@ Before fetching tokens via the password grant, you need to log in and enable Dir
 6. Click **Save**.
 
 ---
+## Sequence Diagram
 
+```mermaid
+sequenceDiagram
+    participant Client
+    participant KC as Keycloak
+    participant Kong
+    participant App as FiberApp
+    participant MongoDB
+
+    Client->>KC: POST /realms/demo-realm/protocol/openid-connect/token  
+    Note right of Client: (client_id, username, password)
+    KC-->>Client: 200 OK  
+    Note left of KC: {"access_token": JWT}
+
+    Client->>Kong: GET /profile  
+    Note right of Client: (Bearer JWT)
+    Kong->>App: GET /profile  
+    Note right of Kong: (Bearer JWT)
+
+    App->>KC: Introspect/Validate JWT
+    KC-->>App: 200 OK  
+    Note left of KC: { active: true }
+
+    App->>MongoDB: db.collection.find(...)
+    MongoDB-->>App: query result
+
+    App-->>Kong: 200 OK  
+    Note left of App: { profile data }
+    Kong-->>Client: 200 OK  
+    Note right of Kong: { profile data }
+
+```
 ## Getting a Keycloak Access Token
 
 Before calling any protected endpoint, you must log in to Keycloak and obtain a JWT.
