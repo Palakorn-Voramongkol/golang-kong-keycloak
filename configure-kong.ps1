@@ -1,82 +1,118 @@
 # configure-kong.ps1
+# ──────────────────────────────────────────────────────────────────────────────
+# Configures Kong CE to protect /profile with Keycloak JWT, leaving /public open.
+# Builds a true PEM public key from the JWK's n/e parameters.
+# ──────────────────────────────────────────────────────────────────────────────
 
-$KongAdminUrl = "http://localhost:8001"
-$KeycloakCertsUrl = "http://localhost:8080/realms/demo-realm/protocol/openid-connect/certs"
-$AppName = "go-app-service"
+param(
+  [string]$KongAdminUrl     = "http://localhost:8001",
+  [string]$KeycloakCertsUrl = "http://localhost:8080/realms/demo-realm/protocol/openid-connect/certs",
+  [string]$AppName          = "go-app-service",
+  [string]$KeycloakIssuer   = "http://localhost:8080/realms/demo-realm"
+)
 
-# --- Script Body ---
-Write-Host "Waiting for Kong Admin API to be ready..."
-while ($true) { try { Invoke-RestMethod -Uri "$KongAdminUrl/status" -ErrorAction Stop; Write-Host "Kong is ready!"; break } catch { Write-Host -NoNewline "."; Start-Sleep 5 } }
+function Decode-Base64Url {
+  param([string]$s)
+  $s = $s.Replace('-','+').Replace('_','/')
+  switch ($s.Length % 4) {
+    2 { $s += '==' }
+    3 { $s += '=' }
+  }
+  return [Convert]::FromBase64String($s)
+}
 
-Write-Host "Fetching public key from Keycloak..."
+# 1) Wait for Kong Admin
+Write-Host "⏳ Waiting for Kong Admin API at $KongAdminUrl…" -ForegroundColor Yellow
+while ($true) {
+  try {
+    Invoke-RestMethod -Uri "$KongAdminUrl/status" -ErrorAction Stop | Out-Null
+    Write-Host "✅ Kong Admin is up!" -ForegroundColor Green; break
+  } catch {
+    Write-Host -NoNewline "."; Start-Sleep 5
+  }
+}
+
+# 2) Fetch the RS256 JWK
+Write-Host "`n🔑 Fetching RS256 JWK from Keycloak…" -ForegroundColor Cyan
 try {
-    $jwks = Invoke-RestMethod -Uri $KeycloakCertsUrl
-    $signingKey = $jwks.keys | Where-Object { $_.use -eq 'sig' -and $_.alg -eq 'RS256' } | Select-Object -First 1
-    if (-not $signingKey) {
-        Write-Host "Could not find RS256 signing key in JWKS from Keycloak. Aborting." -ForegroundColor Red
-        exit 1
-    }
-    $kid = $signingKey.kid
-    $alg = $signingKey.alg
-    $x5c = $signingKey.x5c[0]
-
-    # Manually build the PEM string line-by-line to ensure correct formatting
-    $pemBody = ""
-    for ($i = 0; $i -lt $x5c.Length; $i += 64) {
-        $end = [System.Math]::Min($i + 64, $x5c.Length)
-        $pemBody += $x5c.Substring($i, $end - $i) + "\n" # Use literal \n
-    }
-    # Trim the final newline character
-    $pemBody = $pemBody.TrimEnd()
-    $publicKeyForJson = "-----BEGIN PUBLIC KEY-----\n$pemBody\n-----END PUBLIC KEY-----"
-
-    Write-Host "Successfully fetched key with kid: $kid" -ForegroundColor Green
-}
-catch {
-    Write-Host "Failed to fetch keys from Keycloak. Is Keycloak running?" -ForegroundColor Red
-    exit 1
+  $jwks = Invoke-RestMethod -Uri $KeycloakCertsUrl -ErrorAction Stop
+  $jwk  = $jwks.keys | Where-Object { $_.use -eq 'sig' -and $_.alg -eq 'RS256' } | Select-Object -First 1
+  if (-not $jwk) { throw "No RS256 key found." }
+  Write-Host "✅ Got JWK (kid = $($jwk.kid))" -ForegroundColor Green
+} catch {
+  Write-Error "Failed to fetch or parse JWKS: $_"; exit 1
 }
 
-Write-Host "Applying configuration to Kong..."
-
-# Clean up previous attempts
+# 3) Build the RSAParameters from n & e
+Write-Host "`n🔨 Building RSA public key from n/e…" -ForegroundColor Cyan
 try {
-    Invoke-RestMethod -Method Delete -Uri "$KongAdminUrl/consumers/keycloak-users/jwt/$kid" -ErrorAction SilentlyContinue
-    Invoke-RestMethod -Method Delete -Uri "$KongAdminUrl/consumers/keycloak-users" -ErrorAction SilentlyContinue
-    Invoke-RestMethod -Method Delete -Uri "$KongAdminUrl/services/$AppName" -ErrorAction SilentlyContinue
-} catch {}
+  $modulus  = Decode-Base64Url $jwk.n
+  $exponent = Decode-Base64Url $jwk.e
 
-# Create Service, Routes, and base JWT Plugin
-Invoke-RestMethod -Method Post -Uri "$KongAdminUrl/services" -Body "{`"name`":`"$AppName`", `"url`":`"http://app:3000`"}" -ContentType "application/json"
-Invoke-RestMethod -Method Post -Uri "$KongAdminUrl/services/$AppName/routes" -Body "{`"name`":`"public-route`", `"paths`":[`"/public`"]}" -ContentType "application/json"
-Invoke-RestMethod -Method Post -Uri "$KongAdminUrl/services/$AppName/routes" -Body "{`"name`":`"profile-route`", `"paths`":[`"/profile`"]}" -ContentType "application/json"
-Invoke-RestMethod -Method Post -Uri "$KongAdminUrl/services/$AppName/plugins" -Body "{`"name`":`"jwt`"}" -ContentType "application/json"
+  $rsaParams = New-Object System.Security.Cryptography.RSAParameters
+  $rsaParams.Modulus  = $modulus
+  $rsaParams.Exponent = $exponent
 
-# Disable JWT on public route
-Invoke-RestMethod -Method Post -Uri "$KongAdminUrl/routes/public-route/plugins" -Body "{`"name`":`"jwt`", `"enabled`":false}" -ContentType "application/json"
+  $rsa = [System.Security.Cryptography.RSA]::Create()
+  $rsa.ImportParameters($rsaParams)
 
-# Create Consumer
-Invoke-RestMethod -Method Post -Uri "$KongAdminUrl/consumers" -Body "{`"username`":`"keycloak-users`"}" -ContentType "application/json"
-
-# --- THIS IS THE FINAL FIX ---
-# Create the JSON payload as a here-string and then replace the newline
-# characters with the literal `\n` that the JSON parser expects.
-Write-Host "  - Registering Keycloak public key with consumer"
-$jsonPayload = @"
-{
-    "key": "$kid",
-    "algorithm": "$alg",
-    "rsa_public_key": "$publicKeyForJson"
+  # Export to DER (SubjectPublicKeyInfo)
+  $spki = $rsa.ExportSubjectPublicKeyInfo()
+  $b64  = [Convert]::ToBase64String($spki)
+  $lines = ($b64 -split '(.{64})' | Where-Object { $_ -ne '' })
+  $pemPublicKey = "-----BEGIN PUBLIC KEY-----`n" + ($lines -join "`n") + "`n-----END PUBLIC KEY-----"
+  Write-Host "✅ PEM public key built." -ForegroundColor Green
+} catch {
+  Write-Error "Failed to build RSA public key: $_"; exit 1
 }
-"@
 
-# Replace the PowerShell newline `r`n with a literal \n for the JSON body
-$cleanJsonBody = $jsonPayload.Replace("`r`n", "`n").Replace("`n", "\n")
+# 4) Clean up old config
+Write-Host "`n🧹 Cleaning up old Kong config…" -ForegroundColor Cyan
+@(
+  "/consumers/keycloak-users/jwt/$KeycloakIssuer",
+  "/services/$AppName",
+  "/consumers/keycloak-users"
+) | ForEach-Object {
+  try { Invoke-RestMethod -Method Delete -Uri "$KongAdminUrl$_" -ErrorAction SilentlyContinue } catch {}
+}
 
-# Use curl.exe directly, as it handles raw string bodies more reliably than Invoke-RestMethod
-curl.exe -X POST `
-  -H "Content-Type: application/json" `
-  -d $cleanJsonBody `
-  http://localhost:8001/consumers/keycloak-users/jwt
+# 5) Create Service & Routes
+Write-Host "`n🛠️  Creating Service & Routes…" -ForegroundColor Cyan
+Invoke-RestMethod -Method Post -Uri "$KongAdminUrl/services" `
+    -Body (@{ name = $AppName; url = "http://app:3000" } | ConvertTo-Json) `
+    -ContentType "application/json"
 
-Write-Host "`nConfiguration complete! Your gateway is ready." -ForegroundColor Green
+Invoke-RestMethod -Method Post -Uri "$KongAdminUrl/services/$AppName/routes" `
+    -Body (@{ name = "public-route";  paths = @("/public")  } | ConvertTo-Json) `
+    -ContentType "application/json"
+
+Invoke-RestMethod -Method Post -Uri "$KongAdminUrl/services/$AppName/routes" `
+    -Body (@{ name = "profile-route"; paths = @("/profile") } | ConvertTo-Json) `
+    -ContentType "application/json"
+
+# 6) Create Consumer
+Write-Host "`n👤 Creating Consumer 'keycloak-users'…" -ForegroundColor Cyan
+Invoke-RestMethod -Method Post -Uri "$KongAdminUrl/consumers" `
+    -Body (@{ username = "keycloak-users" } | ConvertTo-Json) `
+    -ContentType "application/json"
+
+# 7) Register rsa_public_key under RS256
+Write-Host "🔐 Registering rsa_public_key for consumer…" -ForegroundColor Cyan
+$jwtCred = @{
+  key            = $KeycloakIssuer
+  algorithm      = "RS256"
+  rsa_public_key = $pemPublicKey
+}
+Invoke-RestMethod -Method Post -Uri "$KongAdminUrl/consumers/keycloak-users/jwt" `
+    -Body ($jwtCred | ConvertTo-Json -Depth 5) `
+    -ContentType "application/json"
+
+# 8) Attach JWT plugin only to /profile
+Write-Host "`n🔌 Attaching JWT plugin to /profile route…" -ForegroundColor Cyan
+Invoke-RestMethod -Method Post -Uri "$KongAdminUrl/routes/profile-route/plugins" `
+    -Body (@{ name = "jwt" } | ConvertTo-Json) `
+    -ContentType "application/json"
+
+Write-Host "`n🎉 Done! Kong is configured:" -ForegroundColor Green
+Write-Host "   • http://localhost:8081/public  → no auth"
+Write-Host "   • http://localhost:8081/profile → JWT required" -ForegroundColor Green

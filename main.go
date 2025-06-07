@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	jwtware "github.com/gofiber/jwt/v3"
 	"github.com/golang-jwt/jwt/v4"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -19,48 +19,76 @@ var (
 	mongoDB     *mongo.Database
 )
 
-// Helper: extract roles from Keycloak JWT "realm_access" claim
-func extractRoles(c *fiber.Ctx) ([]string, error) {
-	user := c.Locals("user").(*jwt.Token)
-	claims := user.Claims.(jwt.MapClaims)
+// --- NEW HELPER FUNCTION ---
+// Manually parse the JWT from the Authorization header without validation
+func parseToken(c *fiber.Ctx) (jwt.MapClaims, error) {
+	authHeader := c.Get("Authorization")
+	if authHeader == "" {
+		return nil, fmt.Errorf("missing Authorization header")
+	}
 
-	// Keycloak puts roles under "realm_access":{ "roles":[...] }
-	if realmAccess, ok := claims["realm_access"].(map[string]interface{}); ok {
-		if roles, ok2 := realmAccess["roles"].([]interface{}); ok2 {
-			var out []string
-			for _, r := range roles {
-				if s, ok3 := r.(string); ok3 {
-					out = append(out, s)
-				}
+	parts := strings.Split(authHeader, " ")
+	if len(parts) != 2 || parts[0] != "Bearer" {
+		return nil, fmt.Errorf("invalid Authorization header format")
+	}
+	tokenString := parts[1]
+
+	// Parse the token without verifying the signature. We trust KrakenD for that.
+	token, _, err := new(jwt.Parser).ParseUnverified(tokenString, jwt.MapClaims{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse token: %v", err)
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, fmt.Errorf("invalid token claims")
+	}
+	return claims, nil
+}
+
+// --- MODIFIED HELPER ---
+// extract roles from parsed claims
+func extractRoles(claims jwt.MapClaims) ([]string, error) {
+	// Keycloak now puts roles in a top-level "roles" claim
+	if rolesClaim, ok := claims["roles"].([]interface{}); ok {
+		var out []string
+		for _, r := range rolesClaim {
+			if s, ok2 := r.(string); ok2 {
+				out = append(out, s)
 			}
-			return out, nil
 		}
+		return out, nil
 	}
 	return nil, fmt.Errorf("no roles in token")
 }
 
+// --- MODIFIED MIDDLEWARE ---
 // Middleware to allow only users with a specific role
 func requireRole(role string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		roles, err := extractRoles(c)
+		claims, err := parseToken(c)
 		if err != nil {
-			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-				"error": "Cannot extract roles",
-			})
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		roles, err := extractRoles(claims)
+		if err != nil {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Cannot extract roles"})
 		}
 		for _, r := range roles {
 			if r == role {
+				// Store claims in context for the next handler to use
+				c.Locals("claims", claims)
 				return c.Next()
 			}
 		}
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-			"error": fmt.Sprintf("Missing role: %s", role),
-		})
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": fmt.Sprintf("Missing role: %s", role)})
 	}
 }
 
 // Connect to MongoDB
 func initMongo() {
+	// ... (this function is fine, no changes needed)
 	mongoURI := os.Getenv("MONGO_URI")
 	if mongoURI == "" {
 		mongoURI = "mongodb://localhost:27017"
@@ -86,47 +114,28 @@ func initMongo() {
 }
 
 func main() {
-	// Initialize Mongo
 	initMongo()
 
 	app := fiber.New()
 
 	// Public route (no auth)
 	app.Get("/public", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{
-			"message": "This is a public endpoint.",
-		})
+		return c.JSON(fiber.Map{"message": "This is a public endpoint."})
 	})
 
-	// JWT Middleware: validate tokens issued by Keycloak
-	keycloakIssuer := os.Getenv("KEYCLOAK_ISSUER")
-	if keycloakIssuer == "" {
-		keycloakIssuer = "http://localhost:8080/realms/demo-realm"
-	}
-	// Construct JWKS URL: Keycloak exposes at /protocol/openid-connect/certs
-	jwksURL := fmt.Sprintf("%s/protocol/openid-connect/certs", keycloakIssuer)
-
-	app.Use(jwtware.New(jwtware.Config{
-		// Parse and validate JWT against JWKS
-		KeySetURL: jwksURL,
-		// Accept only RS256 tokens
-		SigningMethod: "RS256",
-		ContextKey:    "user",
-		ErrorHandler: func(c *fiber.Ctx, err error) error {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error": "Unauthorized - " + err.Error(),
-			})
-		},
-	}))
+	// --- THE JWTWARE MIDDLEWARE HAS BEEN REMOVED ---
 
 	// Protected route: any authenticated user
 	app.Get("/profile", func(c *fiber.Ctx) error {
-		user := c.Locals("user").(*jwt.Token)
-		claims := user.Claims.(jwt.MapClaims)
-		username := claims["preferred_username"].(string)
+		claims, err := parseToken(c)
+		if err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+		}
+		username, _ := claims["preferred_username"].(string)
+
 		return c.JSON(fiber.Map{
-			"message":  "Hello, " + username,
-			"roles":    claims["realm_access"],
+			"message":  fmt.Sprintf("Hello, %v", username),
+			"roles":    claims["roles"],
 			"subject":  claims["sub"],
 			"issuedAt": claims["iat"],
 		})
@@ -134,19 +143,14 @@ func main() {
 
 	// Protected route: only users with realm role "user"
 	app.Get("/user", requireRole("user"), func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{
-			"message": "Hello, user-level endpoint!",
-		})
+		return c.JSON(fiber.Map{"message": "Hello, user-level endpoint!"})
 	})
 
 	// Protected route: only users with realm role "admin"
 	app.Get("/admin", requireRole("admin"), func(c *fiber.Ctx) error {
-		// Example: count documents in a collection
 		count, err := mongoDB.Collection("items").CountDocuments(context.Background(), struct{}{})
 		if err != nil {
-			return c.Status(500).JSON(fiber.Map{
-				"error": "Database error",
-			})
+			return c.Status(500).JSON(fiber.Map{"error": "Database error"})
 		}
 		return c.JSON(fiber.Map{
 			"message":     "Hello, admin-level endpoint!",
@@ -154,5 +158,6 @@ func main() {
 		})
 	})
 
+	log.Println("Starting server on port 3000")
 	log.Fatal(app.Listen(":3000"))
 }

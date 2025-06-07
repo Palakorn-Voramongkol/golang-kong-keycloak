@@ -1,0 +1,5 @@
+{
+    "key": "REPLACE_WITH_ISSUER",
+    "algorithm": "RS256",
+    "rsa_public_key": "REPLACE_WITH_PEM_KEY"
+}
