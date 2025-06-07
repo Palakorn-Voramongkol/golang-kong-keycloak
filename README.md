@@ -281,16 +281,17 @@ Fiber v2.xx.x              http://127.0.0.1:3000
 Before fetching tokens via the password grant, you need to log in and enable Direct Access Grants:
 
 1. Open your browser to [http://localhost:8080](http://localhost:8080)
-2. Sign in with the Keycloak admin credentials:
+2. Click "Administration Console"
+3. Sign in with the Keycloak admin credentials:
 
    * **Username**: `admin`
    * **Password**: `admin`
-3. In the top-left realm dropdown, switch to **demo-realm**:
+4. In the top-left realm dropdown, switch to **demo-realm**:
    ![Select the demo-realm in the top-left realm dropdown](images/realm-selector.png)
-4. In the sidebar, go to **Manage → Clients**, and click **fiber-app**.
-5. Open the **Access settings** (or **Capability config**) tab and toggle on **Direct Access Grants**:
+5. In the sidebar, go to **Manage → Clients**, and click **fiber-app**.
+6. Open the **Access settings** (or **Capability config**) tab and toggle on **Direct Access Grants**:
    ![Enable Direct Access Grants under Capability config for fiber-app client](images/enable-direct-access.png)
-6. Click **Save**.
+7. Click **Save**.
 
 ---
 
