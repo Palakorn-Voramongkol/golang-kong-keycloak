@@ -11,112 +11,132 @@ The runtime architecture uses Kong to protect the backend service. All configura
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Kong Gateway (:8081)
-    participant Keycloak (:8080)
-    participant Go App (:3000)
-    participant Kong Admin API (:8001)
+    participant Kong Gateway as GW (:8081)
+    participant Keycloak as KC (:8080)
+    participant Go App as App (:3000)
+    participant Admin Script
+    participant Kong Admin API as Admin (:8001)
     participant Kong DB
 
-    Note over Client, Go App: Initial Setup
-    activate Kong Admin API
-    Admin Script->>Kong Admin API: POST /services (Create go-app-service)
-    Kong Admin API->>Kong DB: Store service
-    Admin Script->>Kong Admin API: POST /routes (Create /profile)
-    Kong Admin API->>Kong DB: Store route
-    Admin Script->>Kong Admin API: POST /plugins (Enable JWT)
-    Kong Admin API->>Kong DB: Store plugin config
-    Admin Script->>Kong Admin API: POST /consumers (Create keycloak-users)
-    Kong Admin API->>Kong DB: Store consumer
-    Admin Script->>Keycloak: GET /certs (Fetch public key)
-    Keycloak-->>Admin Script: JWKS Data
-    Admin Script->>Kong Admin API: POST /consumers/keycloak-users/jwt (Add public key)
-    Kong Admin API->>Kong DB: Store JWT secret
-    deactivate Kong Admin API
+    Note over Admin Script, Kong DB: Initial Setup
+    activate Admin
+    Admin Script->>Admin: POST /services (Create go-app-service)
+    Admin->>Kong DB: Store service
+    Admin Script->>Admin: POST /routes (Create /profile)
+    Admin->>Kong DB: Store route
+    Admin Script->>Admin: POST /plugins (Attach JWT)
+    Admin->>Kong DB: Store plugin config
+    Admin Script->>Admin: POST /consumers (Create keycloak-users)
+    Admin->>Kong DB: Store consumer
+    Admin Script->>KC: GET /certs (Fetch public key)
+    KC-->>Admin Script: JWKS Data
+    Admin Script->>Admin: POST /consumers/keycloak-users/jwt (Add public key)
+    Admin->>Kong DB: Store JWT secret
+    deactivate Admin
     
     Note over Client, Go App: Runtime Request
-    Client->>+Keycloak: Request token (user: alice, pass: ...)
-    Keycloak-->>-Client: JWT
+    Client->>+KC: Request token (user: alice, pass: ...)
+    KC-->>-Client: JWT
 
-    Client->>+Kong Gateway: GET /profile (Authorization: Bearer JWT)
+    Client->>+GW: GET /profile (Authorization: Bearer JWT)
     
-    Note over Kong Gateway: Validate JWT using stored public key
-    Note over Kong Gateway: JWT is valid!
+    Note over GW: Validate JWT using stored public key
+    Note over GW: JWT is valid!
 
-    Kong Gateway->>+Go App: GET /profile (Forward request)
-    Go App-->>-Kong Gateway: 200 OK ({"message":"Hello, alice", ...})
-    Kong Gateway-->>-Client: 200 OK ({"message":"Hello, alice", ...})
+    GW->>+App: GET /profile (Forward request)
+    App-->>-GW: 200 OK ({"message":"Hello, alice", ...})
+    GW-->>-Client: 200 OK ({"message":"Hello, alice", ...})
 ```
 
 ## How to Run
 
-1.  **Clean up previous volumes (Important for a fresh start):**
-    ```powershell
+1.  **Prerequisites:**
+    *   **For Windows:** No extra tools are needed.
+    *   **For Linux/macOS:** You must have `curl`, `jq`, and `openssl` installed.
+        *   *Ubuntu/Debian:* `sudo apt-get install -y curl jq openssl`
+        *   *macOS (Homebrew):* `brew install curl jq openssl`
+
+2.  **Clean up previous volumes (Important for a fresh start):**
+    ```bash
     docker-compose down -v
     ```
 
-2.  **Build and start all services:**
-    The `--build` flag is only needed if you change your Go application's `Dockerfile`.
-    ```powershell
+3.  **Build and start all services:**
+    The `--build` flag is only needed if you change the Go application's `Dockerfile`.
+    ```bash
     docker-compose up --build -d
     ```
-    This command will start all services. The containers will start up in the correct order based on the `depends_on` configuration.
 
-3.  **Wait for all services to initialize.**
+4.  **Wait for all services to initialize.**
     This is a critical step. Wait about **60-90 seconds** after the command finishes to ensure Keycloak and Kong are fully ready. You can monitor the status with `docker-compose ps`.
 
-4.  **Configure Kong automatically:**
-    In your PowerShell terminal, run the provided configuration script. This script will wait for the Admin API to be ready and then apply all necessary settings.
-    ```powershell
-    .\configure-kong.ps1
-    ```
+5.  **Configure Kong automatically using the correct script for your OS:**
+
+    *   **On Windows (PowerShell):**
+        ```powershell
+        .\configure-kong.ps1
+        ```
+
+    *   **On Linux or macOS (Bash/Shell):**
+        First, make the script executable:
+        ```bash
+        chmod +x configure-kong.sh
+        ```
+        Then, run it:
+        ```bash
+        ./configure-kong.sh
+        ```
     You should see output confirming that the service, routes, and credentials were created successfully.
 
 ## Testing the Endpoints
 
 After the configuration script has run, your gateway is ready to test.
 
-1.  **Get a Token for `alice`:**
-    ```powershell
-    $resp = Invoke-RestMethod -Method Post `
-      -Uri http://localhost:8080/realms/demo-realm/protocol/openid-connect/token `
-      -ContentType "application/x-www-form-urlencoded" `
-      -Body @{
-        grant_type = 'password'
-        client_id  = 'fiber-app'
-        username   = 'alice'
-        password   = 'password123'
-      }
-    $token = $resp.access_token
-    ```
+**1. Get a Token for `alice` (user):**
+*This example uses PowerShell, but you can use any HTTP client.*
+```powershell
+$resp = Invoke-RestMethod -Method Post `
+  -Uri http://localhost:8080/realms/demo-realm/protocol/openid-connect/token `
+  -ContentType "application/x-www-form-urlencoded" `
+  -Body @{
+    grant_type = 'password'
+    client_id  = 'fiber-app'
+    username   = 'alice'
+    password   = 'password123'
+  }
+$token = $resp.access_token
+```
 
-2.  **Test the Public Endpoint (succeeds):**
-    ```powershell
-    curl http://localhost:8081/public
-    ```
+**2. Test the Public Endpoint (succeeds):**
+```bash
+curl http://localhost:8081/public
+```
 
-3.  **Test the Profile Endpoint (succeeds):**
-    ```powershell
-    curl -H "Authorization: Bearer $token" http://localhost:8081/profile
-    ```
+**3. Test the Profile Endpoint (succeeds):**
+```bash
+# In PowerShell:
+curl -H "Authorization: Bearer $token" http://localhost:8081/profile
 
-4.  **Test without a Token (fails):**
-    ```powershell
-    curl -v http://localhost:8081/profile
-    # Expected Output: HTTP/1.1 401 Unauthorized
-    ```
+# In Bash/Shell (after getting a token):
+# curl -H "Authorization: Bearer $TOKEN" http://localhost:8081/profile
+```
 
-## Deep Dive: Kong Configuration with the `jwt` Plugin
+**4. Test without a Token (fails with 401):**
+```bash
+curl -v http://localhost:8081/profile
+```
 
-This project uses Kong's stable, **built-in `jwt` plugin**. This avoids the fragility of community plugins. The configuration is applied via API calls:
+**5. Test Admin Route:**
+Get a token for `bob` (admin) and try accessing `http://localhost:8081/admin`. It will succeed.
 
-1.  **Service and Routes:** We first define the `go-app-service` and its associated URL paths (`/public`, `/profile`).
+## Deep Dive: Kong Configuration
 
-2.  **Enable the `jwt` Plugin:** We apply the `jwt` plugin to the entire `go-app-service`. This means, by default, all routes on that service will require a valid JWT.
+This project uses Kong's stable, **built-in `jwt` plugin** and a **route-based security** approach.
 
-3.  **Create a `Consumer`:** A Kong `Consumer` is an identity that we can associate credentials with. We create a generic `keycloak-users` consumer to represent all users coming from our Keycloak realm.
-
-4.  **Register the Public Key:** This is the most important step. We make an API call to `/consumers/keycloak-users/jwt` and provide Keycloak's public key.
-    *   The `key` field is set to the Keycloak token's `kid` (Key ID). When Kong sees an incoming JWT, it looks at the `kid` in the token's header and finds the matching credential we registered.
-    *   The `rsa_public_key` is the actual public key used to verify the token's signature.
-
-This setup securely configures Kong to trust JWTs issued by your Keycloak instance without needing any custom code in the gateway itself.
+1.  **Service:** We define a single `go-app-service` pointing to our backend.
+2.  **Routes:** We create a separate route for each endpoint (`/public`, `/profile`, etc.). This gives us granular control.
+3.  **Plugin Attachment:** The `jwt` plugin is **only** attached to the protected routes (`/profile`, `/user`, `/admin`). The `/public` route has no plugins and is therefore open.
+4.  **Consumer and JWT Credential:**
+    *   We create a generic `keycloak-users` consumer to represent clients authenticated by Keycloak.
+    *   We then register a JWT Credential against this consumer. The most important part of this credential is the **RSA Public Key**, which is built from the `n` and `e` values of Keycloak's JWK.
+    *   The `key` of the credential is set to the **issuer URL** from the JWT. When Kong receives a token, it looks at the `iss` claim and uses it to find the correct public key to verify the signature.

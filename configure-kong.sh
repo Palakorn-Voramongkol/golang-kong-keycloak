@@ -1,61 +1,108 @@
 #!/bin/sh
-# This script will run after the 'kong' service is healthy.
+# This script configures a running Kong instance for Linux/macOS users.
+# It requires curl, jq, and openssl to be installed on the host machine.
 set -e
 
-echo "Waiting for Keycloak to be ready..."
-# Keycloak can be slow, so we poll its health endpoint
-# Note: We are using the internal Docker network hostname 'keycloak'
-until curl -s -f -o /dev/null http://keycloak:8080/health/ready; do
+# --- Configuration ---
+KONG_ADMIN_URL="http://localhost:8001"
+KEYCLOAK_CERTS_URL="http://localhost:8080/realms/demo-realm/protocol/openid-connect/certs"
+APP_NAME="go-app-service"
+KEYCLOAK_ISSUER="http://localhost:8080/realms/demo-realm"
+
+# --- Script Body ---
+
+# 1) Wait for Kong Admin API
+echo "⏳ Waiting for Kong Admin API at $KONG_ADMIN_URL…"
+until curl -s -f -o /dev/null "$KONG_ADMIN_URL/status"; do
   printf '.'
   sleep 5
 done
+echo "\n✅ Kong Admin is up!"
 
-echo "Keycloak is ready. Fetching JWKS..."
+# 2) Fetch the RS256 JWK from Keycloak
+echo "\n🔑 Fetching RS256 JWK from Keycloak…"
+JWKS=$(curl -s "$KEYCLOAK_CERTS_URL")
+if [ -z "$JWKS" ]; then
+  echo "❌ Failed to fetch JWKS from Keycloak. Is it running?"
+  exit 1
+fi
 
-# Fetch the JWKS data from Keycloak
-# We need to extract the kid, alg, and x5c values
-JWKS=$(curl -s http://keycloak:8080/realms/demo-realm/protocol/openid-connect/certs)
-KID=$(echo "$JWKS" | jq -r '.keys[] | select(.use=="sig") | .kid')
-ALG=$(echo "$JWKS" | jq -r '.keys[] | select(.use=="sig") | .alg')
-X5C=$(echo "$JWKS" | jq -r '.keys[] | select(.use=="sig") | .x5c[0]')
+# Use jq to parse the JSON and find the signing key
+KID=$(echo "$JWKS" | jq -r '.keys[] | select(.use=="sig" and .alg=="RS256") | .kid')
+MODULUS_B64_URL=$(echo "$JWKS" | jq -r '.keys[] | select(.use=="sig" and .alg=="RS256") | .n')
+EXPONENT_B64_URL=$(echo "$JWKS" | jq -r '.keys[] | select(.use=="sig" and .alg=="RS256") | .e')
 
-# Create the full PEM format for the public key
-PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\n$X5C\n-----END PUBLIC KEY-----"
+if [ -z "$KID" ]; then
+  echo "❌ No RS256 signing key found in JWKS."
+  exit 1
+fi
+echo "✅ Got JWK (kid = $KID)"
 
-echo "--------------------------------"
-echo "Kong is ready. Applying configuration..."
-echo "Using Key ID (kid): $KID"
-echo "--------------------------------"
+# 3) Build the PEM public key using openssl
+echo "\n🔨 Building RSA public key from n/e components…"
+# openssl requires a specific JSON format to convert from JWK to PEM
+PEM_PUBLIC_KEY=$(printf '{"keys":[{"kty":"RSA","e":"%s","n":"%s"}]}' "$EXPONENT_B64_URL" "$MODULUS_B64_URL" | openssl pkey -pubin -inform JWK -outform PEM)
+if [ -z "$PEM_PUBLIC_KEY" ]; then
+  echo "❌ Failed to build PEM key with openssl."
+  exit 1
+fi
+echo "✅ PEM public key built."
 
-# 1. Create the Service
-curl -s -X POST http://kong:8001/services \
-  --data name=go-app-service \
-  --data url=http://app:3000
+# 4) Clean up old Kong config
+echo "\n🧹 Cleaning up old Kong config…"
+curl -s -X DELETE "$KONG_ADMIN_URL/consumers/keycloak-users/jwt/$KEYCLOAK_ISSUER" > /dev/null || true
+curl -s -X DELETE "$KONG_ADMIN_URL/services/$APP_NAME" > /dev/null || true
+curl -s -X DELETE "$KONG_ADMIN_URL/consumers/keycloak-users" > /dev/null || true
 
-# 2. Create Routes
-curl -s -X POST http://kong:8001/services/go-app-service/routes \
-  --data name=public-route \
-  --data paths[]=/public
+# 5) Create Service & ALL Routes
+echo "\n🛠️  Creating Service & All Routes…"
+curl -s -X POST "$KONG_ADMIN_URL/services" \
+  --header 'Content-Type: application/json' \
+  --data '{"name":"'"$APP_NAME"'","url":"http://app:3000"}'
 
-curl -s -X POST http://kong:8001/services/go-app-service/routes \
-  --data name=profile-route \
-  --data paths[]=/profile
+curl -s -X POST "$KONG_ADMIN_URL/services/$APP_NAME/routes" \
+  --header 'Content-Type: application/json' \
+  --data '{"name":"public-route","paths":["/public"],"strip_path":false}'
 
-# 3. Enable the JWT Plugin on the Service
-curl -s -X POST http://kong:8001/services/go-app-service/plugins \
-  --data name=jwt
+curl -s -X POST "$KONG_ADMIN_URL/services/$APP_NAME/routes" \
+  --header 'Content-Type: application/json' \
+  --data '{"name":"profile-route","paths":["/profile"],"strip_path":false}'
 
-# 4. Create a Consumer
-curl -s -X POST http://kong:8001/consumers \
-  --data username=keycloak-users
+curl -s -X POST "$KONG_ADMIN_URL/services/$APP_NAME/routes" \
+  --header 'Content-Type: application/json' \
+  --data '{"name":"user-route","paths":["/user"],"strip_path":false}'
 
-# 5. Add Keycloak's Public Key to the Consumer
-curl -s -X POST http://kong:8001/consumers/keycloak-users/jwt \
-  -H "Content-Type: application/json" \
-  -d '{
-    "key": "'"$KID"'",
-    "algorithm": "'"$ALG"'",
-    "rsa_public_key": "'"$PUBLIC_KEY"'"
-  }'
+curl -s -X POST "$KONG_ADMIN_URL/services/$APP_NAME/routes" \
+  --header 'Content-Type: application/json' \
+  --data '{"name":"admin-route","paths":["/admin"],"strip_path":false}'
 
-echo "\nKong configuration complete."
+# 6) Create Consumer
+echo "\n👤 Creating Consumer 'keycloak-users'…"
+curl -s -X POST "$KONG_ADMIN_URL/consumers" \
+  --header 'Content-Type: application/json' \
+  --data '{"username":"keycloak-users"}'
+
+# 7) Register rsa_public_key with the consumer
+echo "🔐 Registering RSA public key for consumer…"
+# Use jq to build the JSON payload to handle the multi-line PEM key correctly
+JSON_PAYLOAD=$(jq -n \
+  --arg key "$KEYCLOAK_ISSUER" \
+  --arg alg "RS256" \
+  --arg pem "$PEM_PUBLIC_KEY" \
+  '{"key": $key, "algorithm": $alg, "rsa_public_key": $pem}')
+
+curl -s -X POST "$KONG_ADMIN_URL/consumers/keycloak-users/jwt" \
+  --header 'Content-Type: application/json' \
+  --data "$JSON_PAYLOAD"
+
+# 8) Attach JWT plugin to EACH protected route
+echo "\n🔌 Attaching JWT plugin to protected routes…"
+curl -s -X POST "$KONG_ADMIN_URL/routes/profile-route/plugins" --header 'Content-Type: application/json' --data '{"name":"jwt"}'
+curl -s -X POST "$KONG_ADMIN_URL/routes/user-route/plugins" --header 'Content-Type: application/json' --data '{"name":"jwt"}'
+curl -s -X POST "$KONG_ADMIN_URL/routes/admin-route/plugins" --header 'Content-Type: application/json' --data '{"name":"jwt"}'
+
+echo "\n🎉 Done! Kong is configured:"
+echo "   • http://localhost:8081/public  → no auth"
+echo "   • http://localhost:8081/profile → JWT required"
+echo "   • http://localhost:8081/user    → JWT required"
+echo "   • http://localhost:8081/admin   → JWT required"
