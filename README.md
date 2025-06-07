@@ -280,7 +280,7 @@ Fiber v2.xx.x              http://127.0.0.1:3000
 
 Before fetching tokens via the password grant, you need to log in and enable Direct Access Grants:
 
-1. Open your browser to [http://localhost:8080/auth/admin/](http://localhost:8080/auth/admin/)
+1. Open your browser to [http://localhost:8080](http://localhost:8080)
 2. Sign in with the Keycloak admin credentials:
 
    * **Username**: `admin`
