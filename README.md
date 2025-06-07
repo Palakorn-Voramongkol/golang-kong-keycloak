@@ -34,7 +34,7 @@ A public endpoint is exposed at `/public`, and protected endpoints are `/profile
       - [Keycloak](#keycloak)
       - [Kong](#kong)
       - [Fiber App](#fiber-app)
-    - [4. Enable Direct Access Grants on the `fiber-app` Client](#4-enable-direct-access-grants-on-the-fiber-app-client)
+      - [4. Enable Direct Access Grants on the `fiber-app` Client](#4-enable-direct-access-grants-on-the-fiber-app-client)
   - [Getting a Keycloak Access Token](#getting-a-keycloak-access-token)
       - [Token Endpoint](#token-endpoint)
       - [Linux / macOS (bash or zsh)](#linux--macos-bash-or-zsh-2)
@@ -274,19 +274,25 @@ Fiber v2.xx.x              http://127.0.0.1:3000
 
 ---
 
-### 4. Enable Direct Access Grants on the `fiber-app` Client
+#### 4. Enable Direct Access Grants on the `fiber-app` Client
 
-Before fetching tokens via the password grant, enable **Direct Access Grants** in Keycloak:
+Before fetching tokens via the password grant, you need to log in and enable Direct Access Grants:
 
-1. Switch the realm selector to **demo-realm**
-   ![Select the demo-realm in the top-left realm dropdown](images/realm-selector.png)
+1. Open your browser to  
+```
 
-2. Go to **Manage → Clients**, click **fiber-app**.
+[http://localhost:8080/auth/admin/](http://localhost:8080/auth/admin/)
 
-3. Open the **Access settings** (or **Capability config**) tab and toggle on **Direct Access Grants**:
-   ![Enable Direct Access Grants under Capability config for fiber-app client](images/enable-direct-access.png)
-
-4. Click **Save**.
+```
+2. Sign in with the Keycloak admin credentials:  
+- **Username**: `admin`  
+- **Password**: `admin`  
+3. In the top-left realm dropdown, switch to **demo-realm**:  
+![Select the demo-realm in the top-left realm dropdown](images/realm-selector.png)
+4. In the sidebar, go to **Manage → Clients**, and click **fiber-app**.
+5. Open the **Access settings** (or **Capability config**) tab and toggle on **Direct Access Grants**:  
+![Enable Direct Access Grants under Capability config for fiber-app client](images/enable-direct-access.png)
+6. Click **Save**.
 
 ---
 
