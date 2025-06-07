@@ -5,7 +5,7 @@ This repository demonstrates a simple setup where:
 * **Fiber** (Go) serves as a backend REST API  
 * **MongoDB** stores application data  
 * **Keycloak** (Quarkus) provides OpenID Connect / JWT-based authentication & authorization  
-* **Kong** (Postgres-backed) acts as an API gateway (optional)  
+* **Kong** (Postgres-backed) acts as an API gateway  
 
 Users are preconfigured via an import-realm file. Two test users exist:
 
@@ -62,7 +62,7 @@ A public endpoint is exposed at `/public`, and protected endpoints are `/profile
         - [Windows](#windows-4)
         - [Linux / macOS](#linux--macos-5)
         - [Windows](#windows-5)
-  - [Optional: Use Kong API Gateway](#optional-use-kong-api-gateway)
+  - [Use Kong API Gateway](#use-kong-api-gateway)
     - [Example: Call `/public` via Kong](#example-call-public-via-kong)
       - [Linux / macOS](#linux--macos-6)
       - [Windows](#windows-6)
@@ -119,8 +119,9 @@ All services run in Docker containers—no additional installs are required on t
 
 * **docker-compose.yml**  
   * **mongo** container (MongoDB 6.0)  
+  * **keycloak-db** container (PostgreSQL 14 for Keycloak)  
   * **keycloak** container (Keycloak 21.1.1 in `start-dev` mode)  
-  * **kong-database** (PostgreSQL for Kong, though Kong runs DB-less)  
+  * **kong-database** (PostgreSQL 14 for Kong)  
   * **kong** (Kong 3.5, declarative mode via `kong.yml`)  
   * **app** (container built from `Dockerfile`)  
 
@@ -206,8 +207,6 @@ You should see output like:
 … "Waiting for connections" …
 ```
 
----
-
 #### Keycloak
 
 **Linux / macOS**
@@ -227,8 +226,6 @@ You should see:
 ```
 … Keycloak 21.1.1 on JVM … started in X s. Listening on: http://0.0.0.0:8080
 ```
-
----
 
 #### Kong
 
@@ -250,8 +247,6 @@ Look for lines like:
 … start worker process …
 … declarative config loaded …
 ```
-
----
 
 #### API-backend
 
@@ -281,17 +276,15 @@ Fiber v2.xx.x              http://127.0.0.1:3000
 Before fetching tokens via the password grant, you need to log in and enable Direct Access Grants:
 
 1. Open your browser to [http://localhost:8080](http://localhost:8080)
-2. Click "Administration Console"
+2. Click **Administration Console**
 3. Sign in with the Keycloak admin credentials:
 
    * **Username**: `admin`
    * **Password**: `admin`
-4. In the top-left realm dropdown, switch to **demo-realm**:
-   ![Select the demo-realm in the top-left realm dropdown](images/realm-selector.png)
-5. In the sidebar, go to **Manage → Clients**, and click **fiber-app**.
-6. Open the **Access settings** (or **Capability config**) tab and toggle on **Direct Access Grants**:
-   ![Enable Direct Access Grants under Capability config for fiber-app client](images/enable-direct-access.png)
-7. Click **Save**.
+4. In the top-left realm dropdown, switch to **demo-realm**
+5. In the sidebar, go to **Manage → Clients**, and click **fiber-app**
+6. Open **Access settings** (or **Capability config**) and toggle on **Direct Access Grants**
+7. Click **Save**
 
 ---
 
@@ -376,8 +369,6 @@ BOB_TOKEN=$(
 )
 ```
 
-* If you do not have `jq`, copy the `"access_token"` field from the JSON response manually.
-
 ---
 
 #### Windows (PowerShell)
@@ -385,25 +376,23 @@ BOB_TOKEN=$(
 ```powershell
 $KC_URL = "http://localhost:8080/realms/demo-realm/protocol/openid-connect/token"
 
-# Alice's token (role “user”)
 $responseAlice = Invoke-RestMethod -Method Post -Uri $KC_URL `
   -ContentType "application/x-www-form-urlencoded" `
   -Body @{
-    client_id = "fiber-app"
-    grant_type = "password"
-    username = "alice"
-    password = "password123"
+    client_id    = "fiber-app"
+    grant_type   = "password"
+    username     = "alice"
+    password     = "password123"
   }
 $ALICE_TOKEN = $responseAlice.access_token
 
-# Bob's token (role “admin”)
 $responseBob = Invoke-RestMethod -Method Post -Uri $KC_URL `
   -ContentType "application/x-www-form-urlencoded" `
   -Body @{
-    client_id = "fiber-app"
-    grant_type = "password"
-    username = "bob"
-    password = "password123"
+    client_id    = "fiber-app"
+    grant_type   = "password"
+    username     = "bob"
+    password     = "password123"
   }
 $BOB_TOKEN = $responseBob.access_token
 ```
@@ -437,7 +426,6 @@ Invoke-RestMethod -Method Get -Uri http://localhost:3000/public -UseBasicParsing
 ```http
 HTTP/1.1 200 OK
 Content-Type: application/json; charset=utf-8
-...
 
 {"message":"This is a public endpoint."}
 ```
@@ -467,12 +455,9 @@ Invoke-RestMethod -Method Get -Uri http://localhost:3000/profile -UseBasicParsin
 ```http
 HTTP/1.1 401 Unauthorized
 Content-Type: application/json; charset=utf-8
-...
 
 {"error":"Unauthorized - Missing or malformed JWT"}
 ```
-
----
 
 #### With a valid token (alice or bob)
 
@@ -505,16 +490,12 @@ Invoke-RestMethod -Method Get -Uri http://localhost:3000/profile `
 }
 ```
 
-If you use Bob’s token, you’ll see `"Hello, bob"` and roles `["admin"]`.
-
 ---
 
 ### Role-Restricted Endpoints: `/user` & `/admin`
 
 * **`GET /user`**: only JWTs with realm role `user` can access
 * **`GET /admin`**: only JWTs with realm role `admin` can access; also counts documents in MongoDB
-
----
 
 #### 1. GET /user
 
@@ -526,12 +507,6 @@ If you use Bob’s token, you’ll see `"Hello, bob"` and roles `["admin"]`.
 curl -i \
   -H "Authorization: Bearer $ALICE_TOKEN" \
   http://localhost:3000/user
-```
-
-**Response**:
-
-```json
-{"message":"Hello, user-level endpoint!"}
 ```
 
 ##### Windows
@@ -548,7 +523,7 @@ Invoke-RestMethod -Method Get -Uri http://localhost:3000/user `
 {"message":"Hello, user-level endpoint!"}
 ```
 
-* **bob** (role `admin` only) will be missing the `user` role → 403 Forbidden:
+* **bob** (role `admin` only) → 403 Forbidden:
 
 ##### Linux / macOS
 
@@ -556,12 +531,6 @@ Invoke-RestMethod -Method Get -Uri http://localhost:3000/user `
 curl -i \
   -H "Authorization: Bearer $BOB_TOKEN" \
   http://localhost:3000/user
-```
-
-**Response**:
-
-```json
-{"error":"Missing role: user"}
 ```
 
 ##### Windows
@@ -578,8 +547,6 @@ Invoke-RestMethod -Method Get -Uri http://localhost:3000/user `
 {"error":"Missing role: user"}
 ```
 
----
-
 #### 2. GET /admin
 
 * **bob** (role `admin`) succeeds: returns `"itemCountDB": 0` if `items` is empty.
@@ -590,15 +557,6 @@ Invoke-RestMethod -Method Get -Uri http://localhost:3000/user `
 curl -i \
   -H "Authorization: Bearer $BOB_TOKEN" \
   http://localhost:3000/admin
-```
-
-**Response**:
-
-```json
-{
-  "message":"Hello, admin-level endpoint!",
-  "itemCountDB":0
-}
 ```
 
 ##### Windows
@@ -628,12 +586,6 @@ curl -i \
   http://localhost:3000/admin
 ```
 
-**Response**:
-
-```json
-{"error":"Missing role: admin"}
-```
-
 ##### Windows
 
 ```powershell
@@ -650,11 +602,12 @@ Invoke-RestMethod -Method Get -Uri http://localhost:3000/admin `
 
 ---
 
-## Optional: Use Kong API Gateway
+## Use Kong API Gateway
 
-If Kong is enabled via `docker-compose.yml` (DB-less mode with `kong/kong.yml`), you can proxy through Kong on port 8000 (HTTP) or 8443 (HTTPS).
+Kong runs with a Postgres backend (via the `kong-database` service) and proxies all incoming requests on:
 
----
+- **8000** (HTTP)  
+- **8443** (HTTPS)
 
 ### Example: Call `/public` via Kong
 
@@ -675,10 +628,6 @@ Invoke-RestMethod -Method Get -Uri http://localhost:8000/public -UseBasicParsing
 ```json
 {"message":"This is a public endpoint."}
 ```
-
-Kong forwards to `http://app:3000/public` and returns the same JSON.
-
----
 
 ### Example: Authenticated `/profile` via Kong
 
@@ -709,7 +658,7 @@ Invoke-RestMethod -Method Get -Uri http://localhost:8000/profile `
 }
 ```
 
-> Kong is optional; you can always call the API-backend service directly on port 3000.
+> Kong runs as a core part of this stack, proxying all requests through port 8000/8443.
 
 ---
 
@@ -729,7 +678,7 @@ Invoke-RestMethod -Method Get -Uri http://localhost:8000/profile `
    docker-compose down
    ```
 
-2. **Remove named volumes** (MongoDB data & Kong data):
+2. **Remove named volumes** (MongoDB & Kong data):
 
    ##### Linux / macOS
 
@@ -762,9 +711,3 @@ docker exec -it demo_mongo \
 docker exec -it demo_mongo `
   mongo demo_db --eval 'db.items.insertOne({ name: "widget", price: 9.99 });'
 ```
-
-Now, calling `/admin` with Bob’s token will return `"itemCountDB": 1`.
-
----
-
-That’s it! You now have a cross-platform (Linux & Windows) demo of an API-backend secured by Keycloak, persisting data in MongoDB, and optionally fronted by Kong. Enjoy exploring and extending this stack!
