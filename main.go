@@ -49,17 +49,27 @@ func parseToken(c *fiber.Ctx) (jwt.MapClaims, error) {
 // --- MODIFIED HELPER ---
 // extract roles from parsed claims
 func extractRoles(claims jwt.MapClaims) ([]string, error) {
-	// Keycloak now puts roles in a top-level "roles" claim
-	if rolesClaim, ok := claims["roles"].([]interface{}); ok {
-		var out []string
-		for _, r := range rolesClaim {
-			if s, ok2 := r.(string); ok2 {
-				out = append(out, s)
-			}
+	// 1) Look for custom top-level "roles"
+	if tl, ok := claims["roles"].([]interface{}); ok {
+		return coerceStrings(tl), nil
+	}
+	// 2) Fallback to Keycloak's default "realm_access.roles"
+	if ra, ok := claims["realm_access"].(map[string]interface{}); ok {
+		if rl, ok2 := ra["roles"].([]interface{}); ok2 {
+			return coerceStrings(rl), nil
 		}
-		return out, nil
 	}
 	return nil, fmt.Errorf("no roles in token")
+}
+
+func coerceStrings(ifaces []interface{}) []string {
+	out := make([]string, 0, len(ifaces))
+	for _, v := range ifaces {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // --- MODIFIED MIDDLEWARE ---
