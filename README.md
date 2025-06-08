@@ -38,7 +38,7 @@ sequenceDiagram
     participant Client
     participant Kong Gateway
     participant Keycloak
-    participant Go Backend API
+    participant Backend API
 
     Note over Client, Keycloak: Step 1: Client gets a token via the Gateway
     Client->>+Kong Gateway: POST /auth/.../token (Get Token)
@@ -46,13 +46,13 @@ sequenceDiagram
     Keycloak-->>-Kong Gateway: JWT
     Kong Gateway-->>-Client: JWT
 
-    Note over Client, Go Backend API: Step 2: Client uses token to access protected API
+    Note over Client, Backend API: Step 2: Client uses token to access protected API
     Client->>+Kong Gateway: GET /profile (Authorization: Bearer JWT)
     
     Note over Kong Gateway: JWT Plugin validates token -> OK
 
-    Kong Gateway->>+Go Backend API: GET /profile (Forward Request)
-    Go Backend API-->>-Kong Gateway: 200 OK ({"message":"Hello, alice", ...})
+    Kong Gateway->>+Backend API: GET /profile (Forward Request)
+    Backend API-->>-Kong Gateway: 200 OK ({"message":"Hello, alice", ...})
     Kong Gateway-->>-Client: 200 OK ({"message":"Hello, alice", ...})
 ```
 
