@@ -1,12 +1,12 @@
-# Secure Go Backend API with Kong and Keycloak
+# Secure Backend API with Kong and Keycloak
 
-This project demonstrates a complete, production-ready setup for securing a Go backend API using **Kong** as an API Gateway and **Keycloak** for identity and access management.
+This project demonstrates a complete, production-ready setup for securing a Backend API using **Kong** as an API Gateway and **Keycloak** for identity and access management.
 
 This final version uses a best-practice approach where **all** traffic, including authentication requests, is proxied through the Kong gateway. Kong's configuration is applied dynamically and automatically via a robust script.
 
 ## Architecture
 
-In this secure architecture, the **only** entry point for external traffic is the Kong Gateway. The Go Backend API and Keycloak are isolated within the internal Docker network.
+In this secure architecture, the **only** entry point for external traffic is the Kong Gateway. The Backend API and Keycloak are isolated within the internal Docker network.
 
 ```
 +--------+            +-------------------+      +-----------------+
@@ -15,7 +15,7 @@ In this secure architecture, the **only** entry point for external traffic is th
 |        |            |   (Port :8081)    |      +-----------------+
 |        |<---------- |                   |
 +--------+            |  - JWT Validation |      +-----------------+
-                      |  - Routing        |----->|  Go Backend API |
+                      |  - Routing        |----->|  Backend API |
                       |                   |      | (for API calls) |
                       |                   |      +-----------------+
                       +-------------------+
@@ -26,8 +26,8 @@ In this secure architecture, the **only** entry point for external traffic is th
 3.  Keycloak returns a JWT to the client, proxied back through Kong.
 4.  The Client then makes a request to a protected API endpoint (e.g., `/profile`) on the Kong Gateway, including the JWT.
 5.  **Kong** intercepts the request, and its `jwt` plugin validates the token's signature using Keycloak's public key.
-6.  If valid, Kong forwards the request to the upstream **Go Backend API**.
-7.  The **Go Backend API** trusts the request and processes it.
+6.  If valid, Kong forwards the request to the upstream **Backend API**.
+7.  The **Backend API** trusts the request and processes it.
 
 ## Request Flow Diagram
 
@@ -61,7 +61,7 @@ sequenceDiagram
 ```
 .
 ├── docker-compose.yml        # Main orchestrator for all services
-├── Dockerfile                # For the Go Backend API application
+├── Dockerfile                # For the Backend API application
 ├── configure-kong.ps1        # Windows script to configure Kong
 ├── configure-kong.sh         # Linux/macOS script to configure Kong
 ├── go.mod                    
@@ -143,7 +143,7 @@ curl -v http://localhost:8081/profile
 ```
 
 **5. Test Admin Route:**
-*   Using Alice's token will be **blocked by the Go Backend API application** with a `403 Forbidden` because she lacks the `admin` role.
+*   Using Alice's token will be **blocked by the Backend API application** with a `403 Forbidden` because she lacks the `admin` role.
 *   Get a token for `bob` and try again. It will succeed.
 
 ---
@@ -152,7 +152,7 @@ curl -v http://localhost:8081/profile
 
 ### 1. Keycloak (`keycloak/import-realm.json`)
 
-*   **Realm Roles Mapper:** We add a **Protocol Mapper** to Keycloak to extract the user's roles into a simple, top-level `roles` claim in the JWT. This is easier for our Go Backend API application to parse. The key setting is **`"multivalued": "true"`**, which ensures the roles are a proper JSON array.
+*   **Realm Roles Mapper:** We add a **Protocol Mapper** to Keycloak to extract the user's roles into a simple, top-level `roles` claim in the JWT. This is easier for our Backend API application to parse. The key setting is **`"multivalued": "true"`**, which ensures the roles are a proper JSON array.
 
 ### 2. Kong (configured via script)
 
@@ -162,8 +162,8 @@ curl -v http://localhost:8081/profile
 
 *   **Robust Public Key Handling:** The configuration script fetches the JWK from Keycloak (via the proxy) and uses cryptographic libraries to convert the **`n` (modulus)** and **`e` (exponent)** components into a standard **PEM-formatted public key**. This is the most reliable way to register an RSA key with Kong's built-in JWT plugin.
 
-### 3. Go Backend API Application (`main.go`)
+### 3. Backend API Application (`main.go`)
 
-*   **Trusting the Gateway:** The most important architectural decision is to **remove JWT validation middleware from the Go Backend API application**. We trust that any request reaching the app has already been authenticated by Kong.
+*   **Trusting the Gateway:** The most important architectural decision is to **remove JWT validation middleware from the Backend API application**. We trust that any request reaching the app has already been authenticated by Kong.
 
-*   **Authorization vs. Authentication:** While the Go Backend API app doesn't re-authenticate the user, it still performs **authorization**. For the `/user` and `/admin` endpoints, it parses the token (without verifying the signature) and checks the `roles` claim to ensure the user has the correct permissions for that specific action. This is a perfect separation of concerns.
+*   **Authorization vs. Authentication:** While the Backend API app doesn't re-authenticate the user, it still performs **authorization**. For the `/user` and `/admin` endpoints, it parses the token (without verifying the signature) and checks the `roles` claim to ensure the user has the correct permissions for that specific action. This is a perfect separation of concerns.
