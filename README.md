@@ -221,7 +221,7 @@ The script will:
 
 ### 1. Keycloak (`keycloak/import-realm.json`)
 
-* **Realm Roles Mapper:** We add a protocol mapper to push realm roles into a top-level `roles` claim (multi-valued) in the JWT. This simplifies role extraction in our Go application.
+* **Realm Roles Mapper:** We add a protocol mapper to push realm roles into a top-level `roles` claim (multi-valued) in the JWT. This simplifies role extraction in our Backend API application.
 
 ### 2. Kong (configured via script)
 
@@ -231,7 +231,7 @@ The script will:
 
 ### 3. Backend API (`main.go`)
 
-* **Trust the Gateway:** JWT signature validation is removed from the Go app; Kong guarantees authenticity.
-* **Authorization:** The Go app parses the token’s `roles` claim and enforces role checks on `/user` and `/admin`.
+* **Trust the Gateway:** JWT signature validation is removed from the Backend API; Kong guarantees authenticity.
+* **Authorization:** The Backend API parses the token’s `roles` claim and enforces role checks on `/user` and `/admin`.
 * **Data Access:** The `/admin` endpoint also performs a MongoDB query to demonstrate a protected database operation.
 
