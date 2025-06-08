@@ -60,13 +60,14 @@ sequenceDiagram
 .
 ├── docker-compose.yml        # Main orchestrator for all services
 ├── Dockerfile                # For the Backend API application
+├── Dockerfile.kong           # Custom Kong (with curl) Dockerfile
 ├── configure-kong.ps1        # Windows script to configure Kong
 ├── configure-kong.sh         # Linux/macOS script to configure Kong
 ├── go.mod                    
 ├── go.sum
 ├── main.go                   # Go backend application source code
 ├── test-all.ps1              # PowerShell automated test script
-├── test-all.sh               # Unix automated test script
+├── test-all.sh               # Linux/macOS automated test script
 └── keycloak/
     └── import-realm.json     # Keycloak realm, user, and client definitions
 ```
