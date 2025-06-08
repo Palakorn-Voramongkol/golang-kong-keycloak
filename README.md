@@ -103,7 +103,16 @@ sequenceDiagram
         ```bash
         chmod +x configure-kong.sh && ./configure-kong.sh
         ```
-    The script will output its progress, creating services, routes, and security credentials.
+    You should see output confirming that the service, routes, and security credentials were created successfully.
+
+## Available Users
+
+The `keycloak/import-realm.json` file creates two users for testing purposes.
+
+| Username | Password    | Roles   |
+| :------- | :---------- | :------ |
+| `alice`  | `password123` | `user`  |
+| `bob`    | `password123` | `admin` |
 
 ## Testing the Endpoints
 
@@ -132,6 +141,10 @@ curl -H "Authorization: Bearer $token" http://localhost:8081/profile
 ```bash
 curl -v http://localhost:8081/profile
 ```
+
+**5. Test Admin Route:**
+*   Using Alice's token will be **blocked by the Go application** with a `403 Forbidden` because she lacks the `admin` role.
+*   Get a token for `bob` and try again. It will succeed.
 
 ---
 
