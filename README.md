@@ -1,4 +1,4 @@
-# Secure Backend API with Kong and Keycloak
+# Secure Go Backend API with Kong and Keycloak
 
 This project demonstrates a complete, production-ready setup for securing a Backend API using **Kong** as an API Gateway and **Keycloak** for identity and access management.
 
