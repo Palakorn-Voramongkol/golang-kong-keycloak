@@ -38,7 +38,7 @@ sequenceDiagram
     participant Client
     participant Kong Gateway
     participant Keycloak
-    participant Go App
+    participant Go API
 
     Note over Client, Keycloak: Step 1: Client gets a token via the Gateway
     Client->>+Kong Gateway: POST /auth/.../token (Get Token)
@@ -46,13 +46,13 @@ sequenceDiagram
     Keycloak-->>-Kong Gateway: JWT
     Kong Gateway-->>-Client: JWT
 
-    Note over Client, Go App: Step 2: Client uses token to access protected API
+    Note over Client, Go API: Step 2: Client uses token to access protected API
     Client->>+Kong Gateway: GET /profile (Authorization: Bearer JWT)
     
     Note over Kong Gateway: JWT Plugin validates token -> OK
 
-    Kong Gateway->>+Go App: GET /profile (Forward Request)
-    Go App-->>-Kong Gateway: 200 OK ({"message":"Hello, alice", ...})
+    Kong Gateway->>+Go API: GET /profile (Forward Request)
+    Go API-->>-Kong Gateway: 200 OK ({"message":"Hello, alice", ...})
     Kong Gateway-->>-Client: 200 OK ({"message":"Hello, alice", ...})
 ```
 
@@ -61,7 +61,7 @@ sequenceDiagram
 ```
 .
 ├── docker-compose.yml        # Main orchestrator for all services
-├── Dockerfile                # For the Go application
+├── Dockerfile                # For the Go API application
 ├── configure-kong.ps1        # Windows script to configure Kong
 ├── configure-kong.sh         # Linux/macOS script to configure Kong
 ├── go.mod                    
@@ -143,7 +143,7 @@ curl -v http://localhost:8081/profile
 ```
 
 **5. Test Admin Route:**
-*   Using Alice's token will be **blocked by the Go application** with a `403 Forbidden` because she lacks the `admin` role.
+*   Using Alice's token will be **blocked by the Go API application** with a `403 Forbidden` because she lacks the `admin` role.
 *   Get a token for `bob` and try again. It will succeed.
 
 ---
@@ -152,7 +152,7 @@ curl -v http://localhost:8081/profile
 
 ### 1. Keycloak (`keycloak/import-realm.json`)
 
-*   **Realm Roles Mapper:** We add a **Protocol Mapper** to Keycloak to extract the user's roles into a simple, top-level `roles` claim in the JWT. This is easier for our Go application to parse. The key setting is **`"multivalued": "true"`**, which ensures the roles are a proper JSON array.
+*   **Realm Roles Mapper:** We add a **Protocol Mapper** to Keycloak to extract the user's roles into a simple, top-level `roles` claim in the JWT. This is easier for our Go API application to parse. The key setting is **`"multivalued": "true"`**, which ensures the roles are a proper JSON array.
 
 ### 2. Kong (configured via script)
 
@@ -162,8 +162,8 @@ curl -v http://localhost:8081/profile
 
 *   **Robust Public Key Handling:** The configuration script fetches the JWK from Keycloak (via the proxy) and uses cryptographic libraries to convert the **`n` (modulus)** and **`e` (exponent)** components into a standard **PEM-formatted public key**. This is the most reliable way to register an RSA key with Kong's built-in JWT plugin.
 
-### 3. Go Application (`main.go`)
+### 3. Go API Application (`main.go`)
 
-*   **Trusting the Gateway:** The most important architectural decision is to **remove JWT validation middleware from the Go application**. We trust that any request reaching the app has already been authenticated by Kong.
+*   **Trusting the Gateway:** The most important architectural decision is to **remove JWT validation middleware from the Go API application**. We trust that any request reaching the app has already been authenticated by Kong.
 
-*   **Authorization vs. Authentication:** While the Go app doesn't re-authenticate the user, it still performs **authorization**. For the `/user` and `/admin` endpoints, it parses the token (without verifying the signature) and checks the `roles` claim to ensure the user has the correct permissions for that specific action. This is a perfect separation of concerns.
+*   **Authorization vs. Authentication:** While the Go API app doesn't re-authenticate the user, it still performs **authorization**. For the `/user` and `/admin` endpoints, it parses the token (without verifying the signature) and checks the `roles` claim to ensure the user has the correct permissions for that specific action. This is a perfect separation of concerns.
