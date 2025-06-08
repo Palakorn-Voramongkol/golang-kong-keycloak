@@ -65,7 +65,8 @@ sequenceDiagram
 ├── go.mod                    
 ├── go.sum
 ├── main.go                   # Go backend application source code
-│
+├── test-all.ps1              # PowerShell automated test script
+├── test-all.sh               # Unix automated test script
 └── keycloak/
     └── import-realm.json     # Keycloak realm, user, and client definitions
 ```
