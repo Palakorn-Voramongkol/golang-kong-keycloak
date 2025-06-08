@@ -6,11 +6,11 @@ It serves as a reference implementation that handles:
 *   **Centralized Authentication:** All JWT validation is offloaded to the Kong gateway using its built-in `jwt` plugin.
 *   **Dynamic Configuration:** Kong is run in DB-backed mode, allowing for configuration changes via an Admin API without restarts.
 *   **Automated Setup:** A simple script automates the entire Kong configuration process on startup.
-*   **Zero-Trust Networking:** The Go backend API is not exposed to the host machine, forcing all traffic through the secure gateway.
+*   **Robust Service Startup:** The startup sequence is carefully managed to prevent common race conditions between services.
 
 ## Architecture
 
-In this secure architecture, the **only** entry point for external traffic is the Kong Gateway. The Go API is isolated within the internal Docker network, accessible only by Kong.
+The request flow is as follows:
 
 ```
                       +-------------------+      +-----------------+
@@ -20,7 +20,7 @@ In this secure architecture, the **only** entry point for external traffic is th
 |        |            |                   |
 | Client +----------->|  - JWT Validation |      +-----------------+
 |        |            |  - Routing        |----->|  Go Backend API |
-+--------+            |                   |      | (Internal Only) |
++--------+            |                   |      |  (Port :3000)   |
                       |                   |      +-----------------+
                       +-------------------+
 ```
@@ -31,7 +31,7 @@ In this secure architecture, the **only** entry point for external traffic is th
     *   It inspects the token's `iss` (issuer) claim to identify the origin.
     *   It looks up the corresponding "Consumer" and finds the registered public key for that issuer.
     *   It validates the token's signature, issuer, and expiration.
-4.  If validation succeeds, Kong forwards the request to the upstream **Go Backend API** over the internal Docker network.
+4.  If validation succeeds, Kong forwards the request to the upstream **Go Backend API**.
 5.  The **Go Backend API** trusts the request (as it came from the gateway) and processes it without re-validating the token.
 
 ## Request Flow Diagrams
@@ -43,43 +43,44 @@ This diagram shows the flow when a client with a valid token accesses a protecte
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Kong Gateway as GW (:8081)
-    participant Keycloak as KC (:8080)
-    participant Go App as App (internal)
+    participant Kong Gateway
+    participant Keycloak
+    participant Go App
 
-    Client->>+KC: Request token (user: alice, pass: ...)
-    KC-->>-Client: JWT
+    Client->>+Keycloak: Request token (user: alice, pass: ...)
+    Keycloak-->>-Client: JWT
 
-    Client->>+GW: GET /profile (Authorization: Bearer JWT)
+    Client->>+Kong Gateway: GET /profile (Authorization: Bearer JWT)
 
-    Note over GW: JWT Plugin intercepts
-    Note over GW: Token 'iss' claim matches registered consumer
-    Note over GW: Signature is valid using stored public key
-    Note over GW: Validation Success!
+    Note over Kong Gateway: JWT Plugin intercepts
+    Note over Kong Gateway: Token 'iss' claim matches registered consumer
+    Note over Kong Gateway: Signature is valid using stored public key
+    Note over Kong Gateway: Validation Success!
 
-    GW->>+App: GET /profile (Forward request)
-    App-->>-GW: 200 OK ({"message":"Hello, alice", ...})
-    GW-->>-Client: 200 OK ({"message":"Hello, alice", ...})
+    Kong Gateway->>+Go App: GET /profile (Forward request)
+    Go App-->>-Kong Gateway: 200 OK ({"message":"Hello, alice", ...})
+    Kong Gateway-->>-Client: 200 OK ({"message":"Hello, alice", ...})
 ```
 
 ### 2. Unauthorized Request (No Token)
 
-This diagram shows how Kong blocks requests to protected endpoints that are missing a token. The Go App is never contacted.
+This diagram shows how Kong blocks requests to protected endpoints that are missing a token.
 
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Kong Gateway as GW (:8081)
-    participant Go App as App (internal)
+    participant Kong Gateway
+    participant Keycloak
+    participant Go App
 
-    Client->>+GW: GET /profile (No token)
+    Client->>+Kong Gateway: GET /profile (No token)
     
-    Note over GW: JWT Plugin intercepts
-    Note over GW: No 'Authorization' header found!
+    Note over Kong Gateway: JWT Plugin intercepts
+    Note over Kong Gateway: No 'Authorization' header found!
 
-    GW-->>-Client: 401 Unauthorized
+    Kong Gateway-->>-Client: 401 Unauthorized
 
-    Note right of GW: Go App is never contacted.
+    Note right of Kong Gateway: Go App is never contacted.
 ```
 
 ## Project Structure
@@ -119,7 +120,7 @@ sequenceDiagram
     ```
 
 3.  **Wait for all services to initialize.**
-    This is a critical step. Wait about **60-90 seconds** after the command finishes to ensure Keycloak and Kong are fully ready. You can monitor the status with `docker-compose ps`.
+    This is a critical step. Wait about **60-90 seconds** for all services to start. You can monitor the status with `docker-compose ps`.
 
 4.  **Configure Kong automatically using the correct script for your OS:**
 
