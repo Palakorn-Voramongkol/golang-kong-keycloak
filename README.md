@@ -21,8 +21,6 @@ In this secure architecture, the **only** entry point for external traffic is th
                       +-------------------+
 ```
 
-````
-
 1.  A **Client** requests a JWT from the Kong Gateway's `/auth` endpoint.  
 2.  **Kong** forwards this request to the internal **Keycloak** instance.  
 3.  Keycloak returns a JWT to the client, proxied back through Kong.  
