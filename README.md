@@ -11,12 +11,12 @@ In this secure architecture, the **only** entry point for external traffic is th
 ```
 +--------+            +-------------------+      +-----------------+
 |        |----------->|                   |----->| Keycloak        |
-| Client |            |   Kong Gateway    |      | (for /auth/...) |
+| Client |            |   Kong Gateway    |<-----| (for /auth/...) |
 |        |            |   (Port :8081)    |      +-----------------+
 |        |<---------- |                   |
 +--------+            |  - JWT Validation |      +-----------------+
                       |  - Routing        |----->|  Backend API |
-                      |                   |      | (for API calls) |
+                      |                   |<-----| (for API calls) |
                       |                   |      +-----------------+
                       +-------------------+
 ```
