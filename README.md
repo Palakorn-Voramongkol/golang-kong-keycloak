@@ -127,87 +127,132 @@ The `keycloak/import-realm.json` file creates two users for testing:
 
 ### Manual Testing
 
-1. **Get an Access Token for `alice`:**
+#### 1. Get an Access Token for `alice`
 
-   ```powershell
-   $resp = Invoke-RestMethod -Method Post `
-     -Uri http://localhost:8081/auth/realms/demo-realm/protocol/openid-connect/token `
-     -ContentType "application/x-www-form-urlencoded" `
-     -Body @{ grant_type = 'password'; client_id = 'fiber-app'; username = 'alice'; password = 'password123' }
-   $aliceToken = $resp.access_token
-   ```
+- **Windows (PowerShell):**
+  ```powershell
+  $resp = Invoke-RestMethod -Method Post `
+    -Uri http://localhost:8081/auth/realms/demo-realm/protocol/openid-connect/token `
+    -ContentType "application/x-www-form-urlencoded" `
+    -Body @{ grant_type='password'; client_id='fiber-app'; username='alice'; password='password123' }
+  $aliceToken = $resp.access_token
+  ```
 
-2. **Get an Access Token for `bob`:**
+- **Linux/macOS (Bash):**
 
-   ```powershell
-   $resp2 = Invoke-RestMethod -Method Post `
-     -Uri http://localhost:8081/auth/realms/demo-realm/protocol/openid-connect/token `
-     -ContentType "application/x-www-form-urlencoded" `
-     -Body @{ grant_type = 'password'; client_id = 'fiber-app'; username = 'bob'; password = 'password123' }
-   $bobToken = $resp2.access_token
-   ```
+  ```bash
+  aliceToken=$(curl -s -X POST http://localhost:8081/auth/realms/demo-realm/protocol/openid-connect/token \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    --data "grant_type=password&client_id=fiber-app&username=alice&password=password123" \
+    | jq -r .access_token)
+  echo "Alice token: $aliceToken"
+  ```
 
-3. **Test Public Endpoint (`/public`):**
+#### 2. Get an Access Token for `bob`
 
-   ```bash
-   curl http://localhost:8081/public
-   ```
+* **Windows (PowerShell):**
 
-4. **Test Profile Endpoint (`/profile`):**
+  ```powershell
+  $resp2 = Invoke-RestMethod -Method Post `
+    -Uri http://localhost:8081/auth/realms/demo-realm/protocol/openid-connect/token `
+    -ContentType "application/x-www-form-urlencoded" `
+    -Body @{ grant_type='password'; client_id='fiber-app'; username='bob'; password='password123' }
+  $bobToken = $resp2.access_token
+  ```
 
-   * With token:
+* **Linux/macOS (Bash):**
 
-     ```bash
-     curl -H "Authorization: Bearer $aliceToken" http://localhost:8081/profile
-     ```
-   * Without token (should return 401):
+  ```bash
+  bobToken=$(curl -s -X POST http://localhost:8081/auth/realms/demo-realm/protocol/openid-connect/token \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    --data "grant_type=password&client_id=fiber-app&username=bob&password=password123" \
+    | jq -r .access_token)
+  echo "Bob token: $bobToken"
+  ```
 
-     ```bash
-     curl -v http://localhost:8081/profile
-     ```
+#### 3. Test Public Endpoint (`/public`)
 
-5. **Test User-Level Endpoint (`/user`):**
+* **Both:**
 
-   * As `alice` (should succeed):
+  ```bash
+  curl http://localhost:8081/public
+  # Expected: {"message":"This is a public endpoint."}
+  ```
 
-     ```bash
-     curl -H "Authorization: Bearer $aliceToken" http://localhost:8081/user
-     ```
-   * As `bob` (should return 403):
+#### 4. Test Profile Endpoint (`/profile`)
 
-     ```bash
-     curl -H "Authorization: Bearer $bobToken" http://localhost:8081/user
-     ```
+* **With token:**
 
-6. **Test Admin-Level Endpoint (`/admin`):**
+  * *PowerShell*:
 
-   * As `alice` (should return 403):
+    ```powershell
+    curl -H "Authorization: Bearer $aliceToken" http://localhost:8081/profile
+    ```
 
-     ```bash
-     curl -H "Authorization: Bearer $aliceToken" http://localhost:8081/admin
-     ```
-   * As `bob` (should succeed):
+  * *Bash*:
 
-     ```bash
-     curl -H "Authorization: Bearer $bobToken" http://localhost:8081/admin
-     ```
+    ```bash
+    curl -H "Authorization: Bearer $aliceToken" http://localhost:8081/profile
+    ```
+
+* **Without token (should return 401):**
+
+  * *PowerShell*:
+
+    ```powershell
+    curl -v http://localhost:8081/profile
+    ```
+
+  * *Bash*:
+
+    ```bash
+    curl -v http://localhost:8081/profile
+    ```
+
+#### 5. Test User-Level Endpoint (`/user`)
+
+* **As `alice` (should succeed):**
+
+  ```bash
+  curl -H "Authorization: Bearer $aliceToken" http://localhost:8081/user
+  ```
+
+* **As `bob` (should return 403):**
+
+  ```bash
+  curl -H "Authorization: Bearer $bobToken" http://localhost:8081/user
+  ```
+
+#### 6. Test Admin-Level Endpoint (`/admin`)
+
+* **As `alice` (should return 403):**
+
+  ```bash
+  curl -H "Authorization: Bearer $aliceToken" http://localhost:8081/admin
+  ```
+
+* **As `bob` (should succeed):**
+
+  ```bash
+  curl -H "Authorization: Bearer $bobToken" http://localhost:8081/admin
+  ```
 
 ### Automated Script Testing
 
-After manual verification, you can run the included test script:
+After manual verification, run:
 
-* **On Windows (PowerShell):**
+* **Windows (PowerShell):**
 
   ```powershell
-  .\test-all.ps1
+  .\test-all-kong.ps1
   ```
-
-* **On Linux/macOS (Bash):**
+* **Linux/macOS (Bash):**
 
   ```bash
-  chmod +x test-all.sh
-  ./test-all.sh
+  chmod +x test-all-kong.sh
+  ./test-all-kong.sh
   ```
+
 
 The script will:
 
