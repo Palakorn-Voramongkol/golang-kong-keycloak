@@ -36,18 +36,36 @@ while ($true) {
 }
 
 # 2) CONFIGURE KEYCLOAK PROXY
-Write-Host "`n🛠️  Setting up Keycloak service & route…" -ForegroundColor Cyan
+Write-Host "`n🛠️  Setting up Keycloak service & routes…" -ForegroundColor Cyan
 
-# a) Service
+# 2a) Base Keycloak service
 Invoke-RestMethod -Method Post -Uri "$KongAdminUrl/services" `
   -Body (@{ name = "keycloak-svc"; url = "http://keycloak:8080" } | ConvertTo-Json) `
   -ContentType "application/json"
 
-# b) Single /auth prefix route (strip /auth → upstream /realms/...)
+# 2b) Generic /auth prefix route (for JWKS, etc.)
 Invoke-RestMethod -Method Post -Uri "$KongAdminUrl/services/keycloak-svc/routes" `
   -Body (@{
     name       = "keycloak-auth-route"
     paths      = @("/auth")
+    strip_path = $true
+    protocols  = @("http","https")
+  } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+# 2c) NEW: /login endpoint → token
+Invoke-RestMethod -Method Post -Uri "$KongAdminUrl/services" `
+  -Body (@{ 
+      name = "keycloak-login-svc"; 
+      url  = "$KeycloakIssuer/protocol/openid-connect/token" 
+    } | ConvertTo-Json) `
+  -ContentType "application/json"
+
+Invoke-RestMethod -Method Post -Uri "$KongAdminUrl/services/keycloak-login-svc/routes" `
+  -Body (@{
+    name       = "login-route"
+    paths      = @("/login")
+    methods    = @("POST")
     strip_path = $true
     protocols  = @("http","https")
   } | ConvertTo-Json) `
@@ -67,9 +85,11 @@ try {
   exit 1
 }
 
-# 4) BUILD PEM PUBLIC KEY FROM n/e
+# 4) BUILD PEM PUBLIC KEY FROM n/e & REGISTER fiber-app CONSUMER
 Write-Host "`n🔨 Constructing PEM public key…" -ForegroundColor Cyan
 try {
+  # ───────────────────────────────────────────────────────────────────────────
+  # existing key‐build logic
   $mod = Decode-Base64Url $jwk.n
   $exp = Decode-Base64Url $jwk.e
   $rsaParams = [System.Security.Cryptography.RSAParameters]@{
@@ -82,10 +102,33 @@ try {
   $spki = $rsa.ExportSubjectPublicKeyInfo()
   $b64  = [Convert]::ToBase64String($spki)
   $lines = ($b64 -split '(.{64})' | Where-Object { $_ -ne '' })
-  $pemPublicKey = "-----BEGIN PUBLIC KEY-----`n" + ($lines -join "`n") + "`n-----END PUBLIC KEY-----"
+  $pemPublicKey = "-----BEGIN PUBLIC KEY-----`n" +
+                  ($lines -join "`n") +
+                  "`n-----END PUBLIC KEY-----"
   Write-Host "✅ PEM public key built." -ForegroundColor Green
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # NEW: create fiber-app consumer & JWT credential
+  Write-Host "`n👤 Creating 'fiber-app' consumer & registering JWT credential…" -ForegroundColor Cyan
+
+  # a) create the consumer
+  Invoke-RestMethod -Method Post -Uri "$KongAdminUrl/consumers" `
+    -Body (@{ username = "fiber-app" } | ConvertTo-Json) `
+    -ContentType "application/json"
+
+  # b) register the same PEM under key = "fiber-app"
+  Invoke-RestMethod -Method Post -Uri "$KongAdminUrl/consumers/fiber-app/jwt" `
+    -Body (@{
+      key            = "fiber-app"
+      algorithm      = "RS256"
+      rsa_public_key = $pemPublicKey
+    } | ConvertTo-Json -Depth 5) `
+    -ContentType "application/json"
+
+  Write-Host "✅ Registered JWT credential for 'fiber-app'." -ForegroundColor Green
+
 } catch {
-  Write-Error "Failed to build PEM: $_"
+  Write-Error "Failed to build PEM or register consumer: $_"
   exit 1
 }
 
@@ -94,6 +137,7 @@ Write-Host "`n🧹 Cleaning up old Kong config…" -ForegroundColor Cyan
 @(
   "/consumers/keycloak-users/jwt/$KeycloakIssuer",
   "/services/keycloak-svc",
+  "/services/keycloak-login-svc",
   "/services/$AppName",
   "/consumers/keycloak-users"
 ) | ForEach-Object {
@@ -103,17 +147,17 @@ Write-Host "`n🧹 Cleaning up old Kong config…" -ForegroundColor Cyan
 # 6) CONFIGURE GO-APP SERVICE & ROUTES
 Write-Host "`n🛠️  Setting up Go App service & routes…" -ForegroundColor Cyan
 
-# a) Service
+# 6a) Service
 Invoke-RestMethod -Method Post -Uri "$KongAdminUrl/services" `
   -Body (@{ name = $AppName; url = "http://app:3000" } | ConvertTo-Json) `
   -ContentType "application/json"
 
-# b) Public endpoint (no JWT)
+# 6b) Public endpoint (no JWT)
 Invoke-RestMethod -Method Post -Uri "$KongAdminUrl/services/$AppName/routes" `
   -Body (@{ name = "public-route"; paths = @("/public"); strip_path = $false } | ConvertTo-Json) `
   -ContentType "application/json"
 
-# c) Protected endpoints
+# 6c) Protected endpoints
 @("profile","user","admin") | ForEach-Object {
   Invoke-RestMethod -Method Post -Uri "$KongAdminUrl/services/$AppName/routes" `
     -Body (@{ name = "$($_)-route"; paths = @("/$_"); strip_path = $false } | ConvertTo-Json) `
@@ -143,9 +187,11 @@ Write-Host "`n🔌 Securing protected routes with JWT…" -ForegroundColor Cyan
     -ContentType "application/json"
 }
 
+# 9) FINAL SUMMARY
 Write-Host "`n🎉 All done! Kong gateway is live on $GatewayUrl" -ForegroundColor Green
-Write-Host "  • Token & JWKS: $GatewayUrl/auth/realms/demo-realm/{protocol/openid-connect/token,protocol/openid-connect/certs}"
-Write-Host "  • Public:       $GatewayUrl/public"
-Write-Host "  • Profile:      $GatewayUrl/profile"
-Write-Host "  • User:         $GatewayUrl/user"
-Write-Host "  • Admin:        $GatewayUrl/admin"
+Write-Host "  • Login:         $GatewayUrl/login"
+Write-Host "  • JWKS:          $GatewayUrl/auth/realms/demo-realm/protocol/openid-connect/certs"
+Write-Host "  • Public:        $GatewayUrl/public"
+Write-Host "  • Profile:       $GatewayUrl/profile"
+Write-Host "  • User:          $GatewayUrl/user"
+Write-Host "  • Admin:         $GatewayUrl/admin"
